@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "helix_dagster"
+version = "0.1.0"
+dependencies = [
+    "dagster",
+    "dagster-webserver",
+    "girder-client>=3.1.20",
+    "pandas",
+    "openpyxl",
+    "python-dotenv",
+]
+
+[tool.dagster]
+module_name = "helix_dagster"
