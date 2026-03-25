@@ -143,8 +143,8 @@ def process_row(client, pdv_items, source_filename, row_index, row, logger):
         flyer_col = _nan_to_none(row.get("Flyer_Column"))
         item_meta = pdv_item.get("meta", {})
 
-        station_x = _nan_to_none(row.get("Flyer_X_Position_Corrected"))
-        station_y = _nan_to_none(row.get("Flyer_Y_Position_Corrected"))
+        station_x = _nan_to_none(row.get("Flyer_X_Position_Corrected (mm)"))
+        station_y = _nan_to_none(row.get("Flyer_Y_Position_Corrected (mm)"))
         sample_x, sample_y = None, None
         if station_x is not None and station_y is not None:
             sample_x, sample_y = _COORD_TRANSFORMER.transform(
