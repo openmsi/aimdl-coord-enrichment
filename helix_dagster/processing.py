@@ -156,8 +156,16 @@ def process_row(client, pdv_items, source_filename, row_index, row, logger):
                 }
             )
         else:
+            station_x = _nan_to_none(row.get("Flyer_X_Position_Final (mm)"))
+            station_y = _nan_to_none(row.get("Flyer_Y_Position_Final (mm)"))
             client.addMetadataToItem(
-                pdv_item["_id"], {"Flyer_Row": flyer_row, "Flyer_Column": flyer_col}
+                pdv_item["_id"],
+                {
+                    "Flyer_Row": flyer_row,
+                    "Flyer_Column": flyer_col,
+                    "Station_X": station_x,
+                    "Station_Y": station_y,
+                },
             )
 
         # --- IGSN metadata checks (only if IGSN is valid) ---
