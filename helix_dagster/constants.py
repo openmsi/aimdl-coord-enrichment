@@ -1,8 +1,8 @@
 import os
 import re
 
-HELIX_FOLDER_ID = os.environ.get("HELIX_FOLDER_ID", "6895729dd48b09febbb57fcc")
-PDV_FOLDER_ID = os.environ.get("PDV_FOLDER_ID", "684894fb8cee616eb53c9330")
+HELIX_FOLDER_ID = os.environ.get("HELIX_FOLDER_ID")
+PDV_FOLDER_ID = os.environ.get("PDV_FOLDER_ID")
 FORM_ID = "68ee6ed7be34766952067408"
 
 IGSN_PATTERN = re.compile(r"[A-Za-z]{6}\d{5}(?:-[A-Za-z0-9]+)?")
