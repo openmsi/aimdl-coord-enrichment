@@ -19,9 +19,7 @@ def list_all_spreadsheet_items(client, folder_id):
         "item",
         parameters={"folderId": folder_id, "limit": 100000},
     )
-    result = [
-        i for i in items if i["name"].endswith((".csv", ".xlsx", ".xls"))
-    ]
+    result = [i for i in items if i["name"].endswith((".csv", ".xlsx", ".xls"))]
     subfolders = client.get(
         "folder",
         parameters={"parentType": "folder", "parentId": folder_id, "limit": 100000},
@@ -82,7 +80,9 @@ def _build_entry(row):
     return entry
 
 
-def process_row(client, pdv_items, existing_entries, source_filename, row_index, row, logger):
+def process_row(
+    client, pdv_items, existing_entries, source_filename, row_index, row, logger
+):
     """
     Process a single spreadsheet row. Returns a dict of issues found.
     """
@@ -100,27 +100,46 @@ def process_row(client, pdv_items, existing_entries, source_filename, row_index,
     if sample_id is None or (isinstance(sample_id, float) and math.isnan(sample_id)):
         msg = f"row {row_index}: Sample_ID is missing"
         logger.warning(f"[IGSN_MISSING] {source_filename} {msg}")
-        issues["igsn_issues"].append({"row": row_index, "value": None, "issue": "missing"})
+        issues["igsn_issues"].append(
+            {"row": row_index, "value": None, "issue": "missing"}
+        )
     else:
         match = IGSN_PATTERN.search(str(sample_id))
         if not match:
             msg = f"row {row_index}: '{sample_id}' does not match IGSN pattern"
             logger.warning(f"[IGSN_INVALID] {source_filename} {msg}")
-            issues["igsn_issues"].append({"row": row_index, "value": str(sample_id), "issue": "invalid_format"})
+            issues["igsn_issues"].append(
+                {"row": row_index, "value": str(sample_id), "issue": "invalid_format"}
+            )
         else:
             valid_igsn = match.group(0)
 
     # --- PDV file lookup ---
     pdv_item = None
-    if pdv_filename and not (isinstance(pdv_filename, float) and math.isnan(pdv_filename)):
+    if pdv_filename and not (
+        isinstance(pdv_filename, float) and math.isnan(pdv_filename)
+    ):
         matches = find_pdv_matches(pdv_items, str(pdv_filename))
         if len(matches) == 0:
-            logger.warning(f"[PDV_NOT_FOUND] {source_filename} row {row_index}: '{pdv_filename}'")
-            issues["pdv_issues"].append({"row": row_index, "pdv_filename": pdv_filename, "type": "not_found"})
+            logger.warning(
+                f"[PDV_NOT_FOUND] {source_filename} row {row_index}: '{pdv_filename}'"
+            )
+            issues["pdv_issues"].append(
+                {"row": row_index, "pdv_filename": pdv_filename, "type": "not_found"}
+            )
         elif len(matches) > 1:
             names = [m["name"] for m in matches]
-            logger.warning(f"[PDV_AMBIGUOUS] {source_filename} row {row_index}: '{pdv_filename}' matched {names}")
-            issues["pdv_issues"].append({"row": row_index, "pdv_filename": pdv_filename, "type": "ambiguous", "matches": names})
+            logger.warning(
+                f"[PDV_AMBIGUOUS] {source_filename} row {row_index}: '{pdv_filename}' matched {names}"
+            )
+            issues["pdv_issues"].append(
+                {
+                    "row": row_index,
+                    "pdv_filename": pdv_filename,
+                    "type": "ambiguous",
+                    "matches": names,
+                }
+            )
         else:
             pdv_item = matches[0]
 
@@ -131,52 +150,53 @@ def process_row(client, pdv_items, existing_entries, source_filename, row_index,
         item_meta = pdv_item.get("meta", {})
 
         if "Flyer_Row" in item_meta or "Flyer_Column" in item_meta:
-            existing = {"Flyer_Row": item_meta.get("Flyer_Row"), "Flyer_Column": item_meta.get("Flyer_Column")}
-            logger.warning(f"[PDV_ALREADY_HAS_POSITION] {source_filename} row {row_index}: '{pdv_filename}' already has {existing}")
-            issues["pdv_issues"].append({"row": row_index, "pdv_filename": pdv_filename, "type": "already_has_position", "existing": existing})
+            existing = {
+                "Flyer_Row": item_meta.get("Flyer_Row"),
+                "Flyer_Column": item_meta.get("Flyer_Column"),
+            }
+            logger.warning(
+                f"[PDV_ALREADY_HAS_POSITION] {source_filename} row {row_index}: '{pdv_filename}' already has {existing}"
+            )
+            issues["pdv_issues"].append(
+                {
+                    "row": row_index,
+                    "pdv_filename": pdv_filename,
+                    "type": "already_has_position",
+                    "existing": existing,
+                }
+            )
         else:
-            client.addMetadataToItem(pdv_item["_id"], {"Flyer_Row": flyer_row, "Flyer_Column": flyer_col})
+            client.addMetadataToItem(
+                pdv_item["_id"], {"Flyer_Row": flyer_row, "Flyer_Column": flyer_col}
+            )
 
         # --- IGSN metadata checks (only if IGSN is valid) ---
         if valid_igsn is not None:
             if "igsn" not in item_meta:
-                logger.warning(f"[PDV_NO_IGSN_METADATA] {source_filename} row {row_index}: '{pdv_filename}'")
-                issues["pdv_issues"].append({"row": row_index, "pdv_filename": pdv_filename, "type": "no_igsn_metadata"})
+                logger.warning(
+                    f"[PDV_NO_IGSN_METADATA] {source_filename} row {row_index}: '{pdv_filename}'"
+                )
+                issues["pdv_issues"].append(
+                    {
+                        "row": row_index,
+                        "pdv_filename": pdv_filename,
+                        "type": "no_igsn_metadata",
+                    }
+                )
             elif item_meta["igsn"] != valid_igsn:
                 logger.warning(
                     f"[PDV_IGSN_MISMATCH] {source_filename} row {row_index}: "
                     f"expected '{valid_igsn}', got '{item_meta['igsn']}'"
                 )
-                issues["pdv_issues"].append({
-                    "row": row_index,
-                    "pdv_filename": pdv_filename,
-                    "type": "igsn_mismatch",
-                    "expected": valid_igsn,
-                    "got": item_meta["igsn"],
-                })
-
-    # --- Form entry ---
-    entry = _build_entry(row)
-
-    missing_fields = sorted(FORM_SCHEMA_FIELDS - set(entry.keys()))
-    extra_fields = sorted(set(entry.keys()) - FORM_SCHEMA_FIELDS)
-
-    if missing_fields:
-        logger.warning(f"[FORM_MISSING_FIELDS] {source_filename} row {row_index}: {missing_fields}")
-        issues["form_issues"].append({"row": row_index, "type": "missing_fields", "fields": missing_fields})
-
-    if extra_fields:
-        logger.warning(f"[FORM_EXTRA_FIELDS] {source_filename} row {row_index}: {extra_fields}")
-        issues["form_issues"].append({"row": row_index, "type": "extra_fields", "fields": extra_fields})
-
-    if valid_igsn is not None:
-        for existing in existing_entries:
-            if existing.get("data", {}).get("sample_IGSN") == valid_igsn:
-                logger.warning(f"[FORM_DUPLICATE] {source_filename} row {row_index}: entry already exists for '{valid_igsn}'")
-                issues["form_issues"].append({"row": row_index, "type": "duplicate_entry", "sample_igsn": valid_igsn})
-                break
-
-    client.post("entry", parameters={"formId": FORM_ID, "data": json.dumps(entry, default=str)})
+                issues["pdv_issues"].append(
+                    {
+                        "row": row_index,
+                        "pdv_filename": pdv_filename,
+                        "type": "igsn_mismatch",
+                        "expected": valid_igsn,
+                        "got": item_meta["igsn"],
+                    }
+                )
 
     return issues
 
