@@ -143,41 +143,24 @@ def process_row(client, pdv_items, source_filename, row_index, row, logger):
         flyer_col = _nan_to_none(row.get("Flyer_Column"))
         item_meta = pdv_item.get("meta", {})
 
-        if "Flyer_Row" in item_meta or "Flyer_Column" in item_meta:
-            existing = {
-                "Flyer_Row": item_meta.get("Flyer_Row"),
-                "Flyer_Column": item_meta.get("Flyer_Column"),
-            }
-            logger.warning(
-                f"[PDV_ALREADY_HAS_POSITION] {source_filename} row {row_index}: '{pdv_filename}' already has {existing}"
+        station_x = _nan_to_none(row.get("Flyer_X_Position_Final (mm)"))
+        station_y = _nan_to_none(row.get("Flyer_Y_Position_Final (mm)"))
+        sample_x, sample_y = None, None
+        if station_x is not None and station_y is not None:
+            sample_x, sample_y = _COORD_TRANSFORMER.transform(
+                "HELIX", station_x, station_y
             )
-            issues["pdv_issues"].append(
-                {
-                    "row": row_index,
-                    "pdv_filename": pdv_filename,
-                    "type": "already_has_position",
-                    "existing": existing,
-                }
-            )
-        else:
-            station_x = _nan_to_none(row.get("Flyer_X_Position_Final (mm)"))
-            station_y = _nan_to_none(row.get("Flyer_Y_Position_Final (mm)"))
-            sample_x, sample_y = None, None
-            if station_x is not None and station_y is not None:
-                sample_x, sample_y = _COORD_TRANSFORMER.transform(
-                    "HELIX", station_x, station_y
-                )
-            client.addMetadataToItem(
-                pdv_item["_id"],
-                {
-                    "Flyer_Row": flyer_row,
-                    "Flyer_Column": flyer_col,
-                    "Station_X": station_x,
-                    "Station_Y": station_y,
-                    "Sample_X": sample_x,
-                    "Sample_Y": sample_y,
-                },
-            )
+        client.addMetadataToItem(
+            pdv_item["_id"],
+            {
+                "Flyer_Row": flyer_row,
+                "Flyer_Column": flyer_col,
+                "Station_X": station_x,
+                "Station_Y": station_y,
+                "Sample_X": sample_x,
+                "Sample_Y": sample_y,
+            },
+        )
 
         # --- IGSN metadata checks (only if IGSN is valid) ---
         if valid_igsn is not None:
