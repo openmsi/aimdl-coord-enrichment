@@ -72,9 +72,7 @@ def _build_entry(row):
     return entry
 
 
-def process_row(
-    client, pdv_items, existing_entries, source_filename, row_index, row, logger
-):
+def process_row(client, pdv_items, source_filename, row_index, row, logger):
     """
     Process a single spreadsheet row. Returns a dict of issues found.
     """
@@ -209,9 +207,7 @@ def process_file(client, item_id, filename, logger):
     }
 
     for row_index, row in df.iterrows():
-        row_issues = process_row(
-            client, pdv_items, existing_entries, filename, row_index, row, logger
-        )
+        row_issues = process_row(client, pdv_items, filename, row_index, row, logger)
         aggregated["igsn_issues"].extend(row_issues["igsn_issues"])
         aggregated["pdv_issues"].extend(row_issues["pdv_issues"])
         aggregated["form_issues"].extend(row_issues["form_issues"])
