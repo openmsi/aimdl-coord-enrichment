@@ -57,14 +57,6 @@ def find_pdv_matches(pdv_items, pdv_filename):
     return [i for i in pdv_items if i["name"].startswith(pdv_filename)]
 
 
-def get_existing_form_entries(client):
-    """Fetch all existing entries for the form."""
-    return client.get(
-        "entry",
-        parameters={"formId": FORM_ID, "limit": 100000},
-    )
-
-
 def _nan_to_none(val):
     if isinstance(val, float) and math.isnan(val):
         return None
@@ -92,7 +84,7 @@ def process_row(
         "form_issues": [],
     }
 
-    sample_id = row.get("Sample_ID")
+    sample_id = row.get("Sample_IGSN")
     pdv_filename = row.get("PDV_FileName")
 
     # --- IGSN validation ---
@@ -209,7 +201,6 @@ def process_file(client, item_id, filename, logger):
 
     df = download_and_read(client, item_id, filename)
     pdv_items = _fetch_all_pdv_items(client)
-    existing_entries = get_existing_form_entries(client)
 
     aggregated = {
         "igsn_issues": [],
