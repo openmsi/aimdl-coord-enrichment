@@ -1,8 +1,12 @@
 import io
-import json
 import math
 
 import pandas as pd
+from coordinate_transformer import CoordinateTransformer
+
+_COORD_TRANSFORMER = CoordinateTransformer.from_yaml(
+    "/Users/alirachidi/dev/work/aimdl_coordinate_systems/instrument_coordinate_transforms.yaml"
+)
 
 from helix_dagster.constants import (
     COLUMN_MAP,
@@ -158,6 +162,11 @@ def process_row(client, pdv_items, source_filename, row_index, row, logger):
         else:
             station_x = _nan_to_none(row.get("Flyer_X_Position_Final (mm)"))
             station_y = _nan_to_none(row.get("Flyer_Y_Position_Final (mm)"))
+            sample_x, sample_y = None, None
+            if station_x is not None and station_y is not None:
+                sample_x, sample_y = _COORD_TRANSFORMER.transform(
+                    "HELIX", station_x, station_y
+                )
             client.addMetadataToItem(
                 pdv_item["_id"],
                 {
@@ -165,6 +174,8 @@ def process_row(client, pdv_items, source_filename, row_index, row, logger):
                     "Flyer_Column": flyer_col,
                     "Station_X": station_x,
                     "Station_Y": station_y,
+                    "Sample_X": sample_x,
+                    "Sample_Y": sample_y,
                 },
             )
 
