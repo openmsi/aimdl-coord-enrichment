@@ -12,8 +12,8 @@ class FileConfig(Config):
 
 
 @op
-def process_file_op(context, config: FileConfig):
-    client = context.resources.girder.get_client()
+def process_file_op(context, config: FileConfig, girder: GirderResource):
+    client = girder.get_client()
     issues = process_file(client, config.item_id, config.filename, context.log)
 
     yield Output(
@@ -30,6 +30,6 @@ def process_file_op(context, config: FileConfig):
     )
 
 
-@job(resource_defs={"girder": GirderResource})
+@job
 def process_helix_file_job():
     process_file_op()
