@@ -4,7 +4,7 @@ from dagster import RunRequest, SensorEvaluationContext, sensor
 
 from helix_dagster.constants import HELIX_FOLDER_ID
 from helix_dagster.assets import process_helix_assets_job
-from helix_dagster.processing import list_all_spreadsheet_items
+from helix_dagster.girder_io import list_all_spreadsheet_items
 from helix_dagster.resources import GirderResource
 
 

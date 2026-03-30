@@ -1,5 +1,3 @@
-import math
-
 import pandas as pd
 from dagster import (
     AssetExecutionContext,
@@ -12,8 +10,8 @@ from dagster import (
 
 from helix_dagster.constants import COLUMN_MAP, PDV_FOLDER_ID
 from helix_dagster.coordinates import transform_station_to_sample
+from helix_dagster.girder_io import download_and_read, nan_to_none
 from helix_dagster.matching import match_pdv_file
-from helix_dagster.processing import download_and_read
 from helix_dagster.resources import GirderResource
 from helix_dagster.validation import validate_igsn
 
@@ -21,12 +19,6 @@ from helix_dagster.validation import validate_igsn
 class ExperimentLogConfig(Config):
     item_id: str
     filename: str
-
-
-def _nan_to_none(val):
-    if isinstance(val, float) and math.isnan(val):
-        return None
-    return val
 
 
 @asset
@@ -155,16 +147,16 @@ def enriched_pdv_metadata(
     for row_idx, pdv_item in matches.items():
         row = df.loc[row_idx]
 
-        station_x = _nan_to_none(row.get("Flyer_X_Position_Final_mm"))
-        station_y = _nan_to_none(row.get("Flyer_Y_Position_Final_mm"))
+        station_x = nan_to_none(row.get("Flyer_X_Position_Final_mm"))
+        station_y = nan_to_none(row.get("Flyer_Y_Position_Final_mm"))
         sample_x, sample_y = transform_station_to_sample(station_x, station_y)
 
         if station_x is not None and station_y is not None and sample_x is None:
             coord_failures += 1
 
         metadata = {
-            "Flyer_Row": _nan_to_none(row.get("Flyer_Row")),
-            "Flyer_Column": _nan_to_none(row.get("Flyer_Column")),
+            "Flyer_Row": nan_to_none(row.get("Flyer_Row")),
+            "Flyer_Column": nan_to_none(row.get("Flyer_Column")),
             "Station_X": station_x,
             "Station_Y": station_y,
             "Sample_X": sample_x,

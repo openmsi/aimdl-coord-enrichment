@@ -14,5 +14,8 @@ dependencies = [
     "coordinate-transformer",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest", "dagster[test]"]
+
 [tool.dagster]
 module_name = "helix_dagster"
