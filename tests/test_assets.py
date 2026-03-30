@@ -1,0 +1,104 @@
+"""Integration tests for the Dagster asset-based pipeline."""
+
+import pandas as pd
+from dagster import build_asset_context
+
+from helix_dagster.assets import (
+    validated_rows as validated_rows_fn,
+    pdv_cross_references as pdv_cross_references_fn,
+)
+
+
+def test_validated_rows_pure():
+    """Call validated_rows asset function directly with a sample DataFrame."""
+    df = pd.DataFrame(
+        [
+            {"Sample_IGSN": "ABCDEF12345", "PDV_FileName": "shot001"},
+            {"Sample_IGSN": "INVALID", "PDV_FileName": "shot002"},
+            {"Sample_IGSN": float("nan"), "PDV_FileName": "shot003"},
+            {"Sample_IGSN": "XYZABC67890-sub1", "PDV_FileName": "shot004"},
+        ]
+    )
+
+    ctx = build_asset_context()
+    result = validated_rows_fn(context=ctx, raw_experiment_log=df)
+
+    out_df = result["dataframe"]
+    issues = result["igsn_issues"]
+
+    # Row 0: valid IGSN
+    assert out_df.loc[0, "valid_igsn"] == "ABCDEF12345"
+    # Row 1: invalid format
+    assert out_df.loc[1, "valid_igsn"] is None
+    # Row 2: missing (NaN)
+    assert out_df.loc[2, "valid_igsn"] is None
+    # Row 3: valid with suffix
+    assert out_df.loc[3, "valid_igsn"] == "XYZABC67890-sub1"
+
+    # Should have 2 issues: invalid_format + missing
+    assert len(issues) == 2
+    issue_types = {i["issue"] for i in issues}
+    assert "invalid_format" in issue_types
+    assert "missing" in issue_types
+
+
+def test_pdv_cross_references_pure():
+    """Call pdv_cross_references asset function with mock inputs."""
+    df = pd.DataFrame(
+        [
+            {"Sample_IGSN": "ABCDEF12345", "PDV_FileName": "shot001", "valid_igsn": "ABCDEF12345"},
+            {"Sample_IGSN": "ABCDEF12346", "PDV_FileName": "shot999", "valid_igsn": "ABCDEF12346"},
+            {"Sample_IGSN": "ABCDEF12347", "PDV_FileName": float("nan"), "valid_igsn": "ABCDEF12347"},
+        ]
+    )
+
+    pdv_items = [
+        {"name": "shot001_ch1.tdms", "_id": "a1"},
+        {"name": "shot002_ch1.tdms", "_id": "b1"},
+    ]
+
+    validated = {"dataframe": df, "igsn_issues": []}
+
+    ctx = build_asset_context()
+    result = pdv_cross_references_fn(
+        context=ctx,
+        validated_rows=validated,
+        pdv_inventory=pdv_items,
+    )
+
+    matches = result["matches"]
+    issues = result["pdv_issues"]
+
+    # Row 0 matched shot001
+    assert 0 in matches
+    assert matches[0]["_id"] == "a1"
+
+    # Row 1 not found
+    assert 1 not in matches
+
+    # Row 2 skipped (NaN filename) — no match, no issue
+    assert 2 not in matches
+
+    # Only one issue: not_found for row 1
+    assert len(issues) == 1
+    assert issues[0]["type"] == "not_found"
+    assert issues[0]["row"] == 1
+
+
+def test_asset_dag_loads():
+    """Verify the Dagster Definitions object loads and contains all six assets."""
+    from helix_dagster import defs
+
+    repo = defs.get_repository_def()
+    asset_keys = {ak.to_user_string() for ak in repo.asset_graph.all_asset_keys}
+
+    expected = {
+        "raw_experiment_log",
+        "pdv_inventory",
+        "validated_rows",
+        "pdv_cross_references",
+        "enriched_pdv_metadata",
+        "quality_report",
+    }
+    for name in expected:
+        assert name in asset_keys, f"Missing asset: {name}"

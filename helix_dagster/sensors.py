@@ -3,12 +3,12 @@ import json
 from dagster import RunRequest, SensorEvaluationContext, sensor
 
 from helix_dagster.constants import HELIX_FOLDER_ID
-from helix_dagster.jobs import process_helix_file_job
+from helix_dagster.assets import process_helix_assets_job
 from helix_dagster.processing import list_all_spreadsheet_items
 from helix_dagster.resources import GirderResource
 
 
-@sensor(job=process_helix_file_job, minimum_interval_seconds=60)
+@sensor(job=process_helix_assets_job, minimum_interval_seconds=60)
 def helix_folder_sensor(context: SensorEvaluationContext, girder: GirderResource):
     cursor_data = json.loads(context.cursor or '{"seen": []}')
     seen = set(cursor_data["seen"])
@@ -26,7 +26,7 @@ def helix_folder_sensor(context: SensorEvaluationContext, girder: GirderResource
                     run_key=item_id,
                     run_config={
                         "ops": {
-                            "process_file_op": {
+                            "raw_experiment_log": {
                                 "config": {
                                     "item_id": item_id,
                                     "filename": item["name"],
