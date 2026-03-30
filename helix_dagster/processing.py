@@ -1,17 +1,20 @@
 import io
 import math
+import os
 
 import pandas as pd
 from coordinate_transformer import CoordinateTransformer
 
-_COORD_TRANSFORMER = CoordinateTransformer.from_yaml(
-    "/Users/alirachidi/dev/work/aimdl_coordinate_systems/instrument_coordinate_transforms.yaml"
+_COORD_YAML = os.environ.get(
+    "COORD_TRANSFORMS_YAML",
+    "instrument_coordinate_transforms.yaml",
 )
+try:
+    _COORD_TRANSFORMER = CoordinateTransformer.from_yaml(_COORD_YAML)
+except FileNotFoundError:
+    _COORD_TRANSFORMER = None
 
 from helix_dagster.constants import (
-    COLUMN_MAP,
-    FORM_ID,
-    FORM_SCHEMA_FIELDS,
     IGSN_PATTERN,
     PDV_FOLDER_ID,
 )
@@ -66,14 +69,6 @@ def _nan_to_none(val):
         return None
     return val
 
-
-def _build_entry(row):
-    """Map spreadsheet row to form entry dict, converting NaN to None."""
-    entry = {}
-    for col, field in COLUMN_MAP.items():
-        if col in row.index:
-            entry[field] = _nan_to_none(row[col])
-    return entry
 
 
 def process_row(client, pdv_items, source_filename, row_index, row, logger):
@@ -146,7 +141,7 @@ def process_row(client, pdv_items, source_filename, row_index, row, logger):
         station_x = _nan_to_none(row.get("Flyer_X_Position_Corrected (mm)"))
         station_y = _nan_to_none(row.get("Flyer_Y_Position_Corrected (mm)"))
         sample_x, sample_y = None, None
-        if station_x is not None and station_y is not None:
+        if station_x is not None and station_y is not None and _COORD_TRANSFORMER is not None:
             sample_x, sample_y = _COORD_TRANSFORMER.transform(
                 "HELIX", station_x, station_y
             )
