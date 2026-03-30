@@ -1,5 +1,7 @@
 # helix_metadata_extraction_dagster
 
+##note that at the moment the coordinate-transformer is not pip installable so that has to be done from a local pull to satisfy the pyproject.toml. The problem is with the publishing workflow failing on Python 3.12 and needing a little clean up.  Work around is pip install from a local pull until there is a moment to fix this and get pip install working.  Apologies!##
+
 A Dagster pipeline that processes laser shock experiment log spreadsheets from the
 HELIX station in the AIMD-L programmable cloud laboratory at Johns Hopkins. It
 extracts metadata, validates sample identifiers (IGSNs), cross-references PDV
