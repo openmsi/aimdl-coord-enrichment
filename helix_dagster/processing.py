@@ -1,23 +1,12 @@
 import io
 import math
-import os
 
 import pandas as pd
-from coordinate_transformer import CoordinateTransformer
 
-_COORD_YAML = os.environ.get(
-    "COORD_TRANSFORMS_YAML",
-    "instrument_coordinate_transforms.yaml",
-)
-try:
-    _COORD_TRANSFORMER = CoordinateTransformer.from_yaml(_COORD_YAML)
-except FileNotFoundError:
-    _COORD_TRANSFORMER = None
-
-from helix_dagster.constants import (
-    IGSN_PATTERN,
-    PDV_FOLDER_ID,
-)
+from helix_dagster.constants import PDV_FOLDER_ID
+from helix_dagster.coordinates import transform_station_to_sample
+from helix_dagster.matching import match_pdv_file
+from helix_dagster.validation import validate_igsn
 
 
 def list_all_spreadsheet_items(client, folder_id):
@@ -85,52 +74,20 @@ def process_row(client, pdv_items, source_filename, row_index, row, logger):
     pdv_filename = row.get("PDV_FileName")
 
     # --- IGSN validation ---
-    valid_igsn = None
-    if sample_id is None or (isinstance(sample_id, float) and math.isnan(sample_id)):
-        msg = f"row {row_index}: Sample_ID is missing"
-        logger.warning(f"[IGSN_MISSING] {source_filename} {msg}")
-        issues["igsn_issues"].append(
-            {"row": row_index, "value": None, "issue": "missing"}
-        )
-    else:
-        match = IGSN_PATTERN.search(str(sample_id))
-        if not match:
-            msg = f"row {row_index}: '{sample_id}' does not match IGSN pattern"
-            logger.warning(f"[IGSN_INVALID] {source_filename} {msg}")
-            issues["igsn_issues"].append(
-                {"row": row_index, "value": str(sample_id), "issue": "invalid_format"}
-            )
-        else:
-            valid_igsn = match.group(0)
+    valid_igsn, igsn_issue = validate_igsn(sample_id)
+    if igsn_issue is not None:
+        igsn_issue["row"] = row_index
+        tag = "IGSN_MISSING" if igsn_issue["issue"] == "missing" else "IGSN_INVALID"
+        logger.warning(f"[{tag}] {source_filename} row {row_index}: {sample_id}")
+        issues["igsn_issues"].append(igsn_issue)
 
     # --- PDV file lookup ---
-    pdv_item = None
-    if pdv_filename and not (
-        isinstance(pdv_filename, float) and math.isnan(pdv_filename)
-    ):
-        matches = find_pdv_matches(pdv_items, str(pdv_filename))
-        if len(matches) == 0:
-            logger.warning(
-                f"[PDV_NOT_FOUND] {source_filename} row {row_index}: '{pdv_filename}'"
-            )
-            issues["pdv_issues"].append(
-                {"row": row_index, "pdv_filename": pdv_filename, "type": "not_found"}
-            )
-        elif len(matches) > 1:
-            names = [m["name"] for m in matches]
-            logger.warning(
-                f"[PDV_AMBIGUOUS] {source_filename} row {row_index}: '{pdv_filename}' matched {names}"
-            )
-            issues["pdv_issues"].append(
-                {
-                    "row": row_index,
-                    "pdv_filename": pdv_filename,
-                    "type": "ambiguous",
-                    "matches": names,
-                }
-            )
-        else:
-            pdv_item = matches[0]
+    pdv_item, pdv_issue = match_pdv_file(pdv_items, pdv_filename)
+    if pdv_issue is not None:
+        pdv_issue["row"] = row_index
+        tag = "PDV_AMBIGUOUS" if pdv_issue["type"] == "ambiguous" else "PDV_NOT_FOUND"
+        logger.warning(f"[{tag}] {source_filename} row {row_index}: '{pdv_filename}'")
+        issues["pdv_issues"].append(pdv_issue)
 
     # --- PDV metadata: add Flyer_Row / Flyer_Column regardless of IGSN ---
     if pdv_item is not None:
@@ -140,11 +97,7 @@ def process_row(client, pdv_items, source_filename, row_index, row, logger):
 
         station_x = _nan_to_none(row.get("Flyer_X_Position_Corrected (mm)"))
         station_y = _nan_to_none(row.get("Flyer_Y_Position_Corrected (mm)"))
-        sample_x, sample_y = None, None
-        if station_x is not None and station_y is not None and _COORD_TRANSFORMER is not None:
-            sample_x, sample_y = _COORD_TRANSFORMER.transform(
-                "HELIX", station_x, station_y
-            )
+        sample_x, sample_y = transform_station_to_sample(station_x, station_y)
         client.addMetadataToItem(
             pdv_item["_id"],
             {
