@@ -1,3 +1,5 @@
+import json
+
 import pandas as pd
 from dagster import (
     AssetExecutionContext,
@@ -13,7 +15,7 @@ from helix_dagster.coordinates import transform_station_to_sample
 from helix_dagster.girder_io import download_and_read, nan_to_none
 from helix_dagster.matching import match_pdv_file
 from helix_dagster.resources import GirderConnection
-from helix_dagster.validation import validate_igsn
+from helix_dagster.validation import NpEncoder, validate_igsn
 
 
 class ExperimentLogConfig(Config):
@@ -159,6 +161,8 @@ def enriched_pdv_metadata(
             "Sample_X": sample_x,
             "Sample_Y": sample_y,
         }
+        # Ensure all values are JSON-serializable
+        metadata = json.loads(json.dumps(metadata, cls=NpEncoder))
 
         try:
             girder.addMetadataToItem(pdv_item["_id"], metadata)

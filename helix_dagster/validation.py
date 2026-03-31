@@ -1,6 +1,20 @@
+import json
 import math
 
+import numpy as np
+
 from helix_dagster.constants import IGSN_PATTERN
+
+
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NpEncoder, self).default(obj)
 
 
 def validate_igsn(sample_id):
