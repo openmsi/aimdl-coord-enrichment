@@ -26,7 +26,7 @@ defs = Definitions(
     resources={
         "girder": GirderResource(
             api_url=EnvVar("GIRDER_API_URL"),
-            api_key=EnvVar("GIRDER_TOKEN"),
+            api_key=EnvVar("GIRDER_API_KEY"),
         ),
     },
 )

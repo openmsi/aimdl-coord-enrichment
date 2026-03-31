@@ -63,7 +63,7 @@ pip install -e ".[dev]"
 | Variable | Description | Required |
 |---|---|---|
 | `GIRDER_API_URL` | Girder REST API URL (e.g. `https://data.htmdec.org/api/v1`) | Yes |
-| `GIRDER_TOKEN` | Girder API key for authentication | Yes |
+| `GIRDER_API_KEY` | Girder API key for authentication | Yes |
 | `HELIX_FOLDER_ID` | Girder folder ID containing experiment log spreadsheets | Yes |
 | `PDV_FOLDER_ID` | Girder folder ID containing PDV data files | Yes |
 | `COORD_TRANSFORMS_YAML` | Path to coordinate transform YAML config | No (defaults to `instrument_coordinate_transforms.yaml`) |
