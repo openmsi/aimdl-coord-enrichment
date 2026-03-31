@@ -29,9 +29,9 @@ def test_validated_rows_pure():
     # Row 0: valid IGSN
     assert out_df.loc[0, "valid_igsn"] == "ABCDEF12345"
     # Row 1: invalid format
-    assert out_df.loc[1, "valid_igsn"] is None
+    assert pd.isna(out_df.loc[1, "valid_igsn"])
     # Row 2: missing (NaN)
-    assert out_df.loc[2, "valid_igsn"] is None
+    assert pd.isna(out_df.loc[2, "valid_igsn"])
     # Row 3: valid with suffix
     assert out_df.loc[3, "valid_igsn"] == "XYZABC67890-sub1"
 
@@ -90,7 +90,7 @@ def test_asset_dag_loads():
     from helix_dagster import defs
 
     repo = defs.get_repository_def()
-    asset_keys = {ak.to_user_string() for ak in repo.asset_graph.all_asset_keys}
+    asset_keys = {ak.to_user_string() for ak in repo.asset_graph.get_all_asset_keys()}
 
     expected = {
         "raw_experiment_log",
