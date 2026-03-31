@@ -12,6 +12,10 @@ _COORD_YAML = os.environ.get(
 try:
     _COORD_TRANSFORMER = CoordinateTransformer.from_yaml(_COORD_YAML)
 except FileNotFoundError:
+    logger.warning(
+        f"Coordinate transforms YAML file not found: {_COORD_YAML}."
+        "Coordinate transformations will be unavailable.",
+    )
     _COORD_TRANSFORMER = None
 
 
@@ -31,7 +35,9 @@ def transform_station_to_sample(station_x, station_y, instrument="HELIX"):
     except Exception:
         logger.warning(
             "Coordinate transform failed for (%s, %s) on instrument %s",
-            station_x, station_y, instrument,
+            station_x,
+            station_y,
+            instrument,
             exc_info=True,
         )
         return None, None
