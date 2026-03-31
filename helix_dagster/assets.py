@@ -155,7 +155,6 @@ def enriched_pdv_metadata(
         if sample_y is not None:
             sample_y = round(sample_y, 4)
 
-
         if station_x is not None and station_y is not None and sample_x is None:
             coord_failures += 1
 
@@ -174,6 +173,9 @@ def enriched_pdv_metadata(
             girder.addMetadataToItem(pdv_item["_id"], metadata)
             written_count += 1
         except Exception as exc:
+            context.log.error(
+                f"Failed to write metadata for row {row_idx}, item {pdv_item['_id']}: {exc}"
+            )
             write_errors.append({"row": row_idx, "error": str(exc)})
 
     context.add_output_metadata(
