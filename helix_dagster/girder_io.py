@@ -5,8 +5,6 @@ import math
 
 import pandas as pd
 
-from helix_dagster.constants import PDV_FOLDER_ID
-
 
 def list_all_spreadsheet_items(client, folder_id):
     """Recursively list all CSV/XLSX items in a Girder folder."""
