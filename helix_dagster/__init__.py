@@ -9,7 +9,7 @@ from helix_dagster.assets import (
     raw_experiment_log,
     validated_rows,
 )
-from helix_dagster.resources import GirderResource
+from helix_dagster.resources import GirderConnection, GirderCredentials
 from helix_dagster.sensors import helix_folder_sensor
 
 defs = Definitions(
@@ -24,9 +24,11 @@ defs = Definitions(
     jobs=[process_helix_assets_job],
     sensors=[helix_folder_sensor],
     resources={
-        "girder": GirderResource(
-            api_url=EnvVar("GIRDER_API_URL"),
-            api_key=EnvVar("GIRDER_API_KEY"),
+        "girder": GirderConnection(
+            credentials=GirderCredentials(
+                api_url=EnvVar("GIRDER_API_URL"),
+                api_key=EnvVar("GIRDER_API_KEY"),
+            )
         ),
     },
 )

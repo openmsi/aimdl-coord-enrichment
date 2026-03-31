@@ -5,16 +5,15 @@ from dagster import RunRequest, SensorEvaluationContext, sensor
 from helix_dagster.constants import HELIX_FOLDER_ID
 from helix_dagster.assets import process_helix_assets_job
 from helix_dagster.girder_io import list_all_spreadsheet_items
-from helix_dagster.resources import GirderResource
+from helix_dagster.resources import GirderConnection
 
 
 @sensor(job=process_helix_assets_job, minimum_interval_seconds=60)
-def helix_folder_sensor(context: SensorEvaluationContext, girder: GirderResource):
+def helix_folder_sensor(context: SensorEvaluationContext, girder: GirderConnection):
     cursor_data = json.loads(context.cursor or '{"seen": []}')
     seen = set(cursor_data["seen"])
 
-    client = girder.get_client()
-    items = list_all_spreadsheet_items(client, HELIX_FOLDER_ID)
+    items = list_all_spreadsheet_items(girder, HELIX_FOLDER_ID)
 
     new_seen = set(seen)
     requests = []

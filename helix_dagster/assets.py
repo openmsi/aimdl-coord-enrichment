@@ -12,7 +12,7 @@ from helix_dagster.constants import COLUMN_MAP, PDV_FOLDER_ID
 from helix_dagster.coordinates import transform_station_to_sample
 from helix_dagster.girder_io import download_and_read, nan_to_none
 from helix_dagster.matching import match_pdv_file
-from helix_dagster.resources import GirderResource
+from helix_dagster.resources import GirderConnection
 from helix_dagster.validation import validate_igsn
 
 
@@ -25,11 +25,10 @@ class ExperimentLogConfig(Config):
 def raw_experiment_log(
     context: AssetExecutionContext,
     config: ExperimentLogConfig,
-    girder: GirderResource,
+    girder: GirderConnection,
 ) -> pd.DataFrame:
     """Download a spreadsheet from Girder and apply COLUMN_MAP rename."""
-    client = girder.get_client()
-    df = download_and_read(client, config.item_id, config.filename)
+    df = download_and_read(girder, config.item_id, config.filename)
     df = df.rename(columns=COLUMN_MAP)
     context.add_output_metadata(
         {
@@ -44,11 +43,10 @@ def raw_experiment_log(
 @asset
 def pdv_inventory(
     context: AssetExecutionContext,
-    girder: GirderResource,
+    girder: GirderConnection,
 ) -> list:
     """Fetch all items from the PDV folder via Girder API."""
-    client = girder.get_client()
-    items = client.get(
+    items = girder.get(
         "item",
         parameters={"folderId": PDV_FOLDER_ID, "limit": 100000},
     )
@@ -133,10 +131,9 @@ def enriched_pdv_metadata(
     context: AssetExecutionContext,
     pdv_cross_references: dict,
     validated_rows: dict,
-    girder: GirderResource,
+    girder: GirderConnection,
 ) -> dict:
     """Write coordinate and IGSN metadata to matched Girder PDV items."""
-    client = girder.get_client()
     df = validated_rows["dataframe"]
     matches = pdv_cross_references["matches"]
 
@@ -164,7 +161,7 @@ def enriched_pdv_metadata(
         }
 
         try:
-            client.addMetadataToItem(pdv_item["_id"], metadata)
+            girder.addMetadataToItem(pdv_item["_id"], metadata)
             written_count += 1
         except Exception as exc:
             write_errors.append({"row": row_idx, "error": str(exc)})
