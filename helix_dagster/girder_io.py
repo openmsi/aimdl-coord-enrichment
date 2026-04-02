@@ -5,6 +5,8 @@ import math
 
 import pandas as pd
 
+from helix_dagster.constants import AIMDL_PAGE_LIMIT
+
 
 def list_all_spreadsheet_items(client, folder_id):
     """Recursively list all CSV/XLSX items in a Girder folder."""
@@ -42,3 +44,72 @@ def nan_to_none(val):
     if isinstance(val, float) and math.isnan(val):
         return None
     return val
+
+
+def fetch_aimdl_datatypes(client):
+    """Fetch the list of available meta.data_type values from /aimdl/datatype.
+
+    Returns a list of strings, e.g. ["pdv_trace", "xrd_raw", ...].
+    """
+    return client.get("aimdl/datatype")
+
+
+def fetch_aimdl_datafiles(client, data_type, limit=100, offset=0):
+    """Fetch a single page of items from /aimdl/datafiles.
+
+    Parameters
+    ----------
+    client : GirderClient
+        Authenticated Girder client.
+    data_type : str
+        The meta.data_type value to filter by (e.g., "pdv_trace").
+    limit : int
+        Max items per page (capped at 100 by endpoint).
+    offset : int
+        Pagination offset.
+
+    Returns
+    -------
+    list[dict]
+        List of Girder item dicts with _id, name, meta.igsn, meta.data_type,
+        size, created, folderId, etc.
+    """
+    return client.get(
+        "aimdl/datafiles",
+        parameters={
+            "dataType": data_type,
+            "limit": min(limit, AIMDL_PAGE_LIMIT),
+            "offset": offset,
+        },
+    )
+
+
+def fetch_all_aimdl_datafiles(client, data_type):
+    """Paginate through all items of a given data type via /aimdl/datafiles.
+
+    The endpoint has a hard limit of 100 per page. This function fetches all
+    pages and returns the concatenated result.
+
+    Parameters
+    ----------
+    client : GirderClient
+        Authenticated Girder client.
+    data_type : str
+        The meta.data_type value to filter by.
+
+    Returns
+    -------
+    list[dict]
+        All matching Girder item dicts.
+    """
+    all_items = []
+    offset = 0
+    while True:
+        batch = fetch_aimdl_datafiles(client, data_type, offset=offset)
+        if not batch:
+            break
+        all_items.extend(batch)
+        if len(batch) < AIMDL_PAGE_LIMIT:
+            break
+        offset += AIMDL_PAGE_LIMIT
+    return all_items
