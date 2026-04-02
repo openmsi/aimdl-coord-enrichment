@@ -9,6 +9,14 @@ from helix_dagster.assets import (
     raw_experiment_log,
     validated_rows,
 )
+from helix_dagster.checks import (
+    coord_transform_check,
+    enrichment_success_rate,
+    igsn_consistency,
+    igsn_validity_rate,
+    pdv_match_rate,
+    zero_inventory,
+)
 from helix_dagster.resources import GirderConnection, GirderCredentials
 from helix_dagster.sensors import helix_folder_sensor
 
@@ -20,6 +28,14 @@ defs = Definitions(
         pdv_cross_references,
         enriched_pdv_metadata,
         quality_report,
+    ],
+    asset_checks=[
+        zero_inventory,
+        igsn_validity_rate,
+        pdv_match_rate,
+        igsn_consistency,
+        enrichment_success_rate,
+        coord_transform_check,
     ],
     jobs=[process_helix_assets_job],
     sensors=[helix_folder_sensor],
