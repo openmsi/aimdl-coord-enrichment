@@ -2,7 +2,6 @@ import os
 import re
 
 HELIX_FOLDER_ID = os.environ.get("HELIX_FOLDER_ID")
-PDV_FOLDER_ID = os.environ.get("PDV_FOLDER_ID")
 
 IGSN_PATTERN = re.compile(r"[A-Za-z]{6}\d{5}(?:-[A-Za-z0-9]+)?")
 

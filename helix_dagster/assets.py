@@ -10,9 +10,9 @@ from dagster import (
     define_asset_job,
 )
 
-from helix_dagster.constants import COLUMN_MAP, PDV_FOLDER_ID
+from helix_dagster.constants import COLUMN_MAP, PDV_TRACE_DATA_TYPE
 from helix_dagster.coordinates import transform_station_to_sample
-from helix_dagster.girder_io import download_and_read, nan_to_none
+from helix_dagster.girder_io import download_and_read, fetch_all_aimdl_datafiles, nan_to_none
 from helix_dagster.matching import match_pdv_file
 from helix_dagster.resources import GirderConnection
 from helix_dagster.validation import NpEncoder, validate_igsn
@@ -43,20 +43,37 @@ def raw_experiment_log(
 
 
 @asset
-def pdv_inventory(
+def pdv_trace_inventory(
     context: AssetExecutionContext,
     girder: GirderConnection,
 ) -> list:
-    """Fetch all items from the PDV folder via Girder API."""
-    items = girder.get(
-        "item",
-        parameters={"folderId": PDV_FOLDER_ID, "limit": 100000},
-    )
-    context.add_output_metadata(
-        {
-            "item_count": MetadataValue.int(len(items)),
-        }
-    )
+    """Fetch PDV trace items via the /aimdl/datafiles endpoint.
+
+    Uses an indexed MongoDB query filtered by meta.data_type='pdv_trace'
+    instead of crawling the PDV folder tree. Items must have meta.igsn
+    set to appear in results.
+    """
+    items = fetch_all_aimdl_datafiles(girder, PDV_TRACE_DATA_TYPE)
+
+    # Extract unique IGSNs from the inventory
+    igsns = set()
+    for item in items:
+        igsn = item.get("meta", {}).get("igsn")
+        if igsn:
+            igsns.add(igsn)
+
+    context.add_output_metadata({
+        "item_count": MetadataValue.int(len(items)),
+        "unique_igsns": MetadataValue.int(len(igsns)),
+        "data_type": MetadataValue.text(PDV_TRACE_DATA_TYPE),
+    })
+
+    if len(items) == 0:
+        context.log.warning(
+            "pdv_trace_inventory returned 0 items. This may indicate that "
+            "meta.igsn has not been tagged on PDV files yet."
+        )
+
     return items
 
 
@@ -98,7 +115,7 @@ def validated_rows(
 def pdv_cross_references(
     context: AssetExecutionContext,
     validated_rows: dict,
-    pdv_inventory: list,
+    pdv_trace_inventory: list,
 ) -> dict:
     """Match PDV filenames to inventory items. Pure matching, no network calls."""
     df = validated_rows["dataframe"]
@@ -107,9 +124,20 @@ def pdv_cross_references(
 
     for idx, row in df.iterrows():
         pdv_filename = row.get("PDV_FileName")
-        pdv_item, issue = match_pdv_file(pdv_inventory, pdv_filename)
+        pdv_item, issue = match_pdv_file(pdv_trace_inventory, pdv_filename)
         if pdv_item is not None:
             matches[idx] = pdv_item
+            # Cross-check IGSN consistency
+            row_igsn = row.get("valid_igsn")
+            item_igsn = pdv_item.get("meta", {}).get("igsn")
+            if row_igsn and item_igsn and row_igsn != item_igsn:
+                pdv_issues.append({
+                    "pdv_filename": pdv_filename,
+                    "type": "igsn_mismatch",
+                    "row": idx,
+                    "spreadsheet_igsn": row_igsn,
+                    "item_igsn": item_igsn,
+                })
         if issue is not None:
             issue["row"] = idx
             pdv_issues.append(issue)
@@ -117,12 +145,14 @@ def pdv_cross_references(
     matched_count = len(matches)
     not_found_count = sum(1 for i in pdv_issues if i["type"] == "not_found")
     ambiguous_count = sum(1 for i in pdv_issues if i["type"] == "ambiguous")
+    mismatch_count = sum(1 for i in pdv_issues if i["type"] == "igsn_mismatch")
 
     context.add_output_metadata(
         {
             "matched_count": MetadataValue.int(matched_count),
             "not_found_count": MetadataValue.int(not_found_count),
             "ambiguous_count": MetadataValue.int(ambiguous_count),
+            "igsn_mismatch_count": MetadataValue.int(mismatch_count),
         }
     )
     return {"matches": matches, "pdv_issues": pdv_issues}
