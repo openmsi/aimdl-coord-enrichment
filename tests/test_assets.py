@@ -86,13 +86,13 @@ def test_pdv_cross_references_pure():
 
 
 def test_asset_dag_loads():
-    """Verify the Dagster Definitions object loads and contains all six assets."""
+    """Verify the Dagster Definitions object loads with all assets and checks."""
     from helix_dagster import defs
 
     repo = defs.get_repository_def()
     asset_keys = {ak.to_user_string() for ak in repo.asset_graph.get_all_asset_keys()}
 
-    expected = {
+    expected_assets = {
         "raw_experiment_log",
         "pdv_inventory",
         "validated_rows",
@@ -100,5 +100,11 @@ def test_asset_dag_loads():
         "enriched_pdv_metadata",
         "quality_report",
     }
-    for name in expected:
+    for name in expected_assets:
         assert name in asset_keys, f"Missing asset: {name}"
+
+    # Verify asset checks are registered
+    check_keys = {
+        str(ck) for ck in repo.asset_graph.asset_check_keys
+    }
+    assert len(check_keys) >= 5, f"Expected at least 5 asset checks, got {len(check_keys)}"

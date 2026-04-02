@@ -184,7 +184,11 @@ def enriched_pdv_metadata(
             "coordinate_transform_failures": MetadataValue.int(coord_failures),
         }
     )
-    return {"written_count": written_count, "write_errors": write_errors}
+    return {
+        "written_count": written_count,
+        "write_errors": write_errors,
+        "coord_failures": coord_failures,
+    }
 
 
 @asset
