@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 import pandas as pd
 from dagster import (
@@ -10,6 +11,7 @@ from dagster import (
     define_asset_job,
 )
 
+from helix_dagster import __version__ as PIPELINE_VERSION
 from helix_dagster.constants import COLUMN_MAP, PDV_FOLDER_ID
 from helix_dagster.coordinates import transform_station_to_sample
 from helix_dagster.girder_io import download_and_read, nan_to_none
@@ -222,6 +224,86 @@ def quality_report(
         }
     )
     return report
+
+
+@asset
+def processing_manifest(
+    context: AssetExecutionContext,
+    config: ExperimentLogConfig,
+    quality_report: dict,
+    validated_rows: dict,
+    pdv_cross_references: dict,
+    enriched_pdv_metadata: dict,
+    girder: GirderConnection,
+) -> dict:
+    """Write a processing status record to the source spreadsheet's Girder item.
+
+    This provides:
+    - Audit trail: persistent record of what the pipeline did
+    - Idempotency: sensor can check before triggering reruns
+    - Cross-system visibility: Girder UI shows processing status
+    """
+    df = validated_rows["dataframe"]
+    total_rows = len(df)
+    valid_igsn_count = int(df["valid_igsn"].notna().sum())
+    matched_count = len(pdv_cross_references["matches"])
+    written_count = enriched_pdv_metadata["written_count"]
+    coord_failures = enriched_pdv_metadata.get("coord_failures", 0)
+
+    igsn_issues = validated_rows["igsn_issues"]
+    pdv_issues = pdv_cross_references["pdv_issues"]
+    write_errors = enriched_pdv_metadata["write_errors"]
+
+    issues_summary = {
+        "igsn_invalid": sum(1 for i in igsn_issues if i.get("issue") == "invalid_format"),
+        "igsn_missing": sum(1 for i in igsn_issues if i.get("issue") == "missing"),
+        "pdv_not_found": sum(1 for i in pdv_issues if i.get("type") == "not_found"),
+        "pdv_ambiguous": sum(1 for i in pdv_issues if i.get("type") == "ambiguous"),
+        "igsn_mismatch": sum(1 for i in pdv_issues if i.get("type") == "igsn_mismatch"),
+        "write_errors": len(write_errors),
+        "coord_failures": coord_failures,
+    }
+
+    has_issues = any(v > 0 for v in issues_summary.values())
+    status = "completed_with_warnings" if has_issues else "completed_clean"
+
+    manifest = {
+        "last_processed": datetime.now(timezone.utc).isoformat(),
+        "dagster_run_id": context.run.run_id,
+        "pipeline_version": PIPELINE_VERSION,
+        "total_rows": total_rows,
+        "rows_valid_igsn": valid_igsn_count,
+        "rows_matched_pdv": matched_count,
+        "rows_enriched": written_count,
+        "status": status,
+        "issues_summary": issues_summary,
+    }
+
+    # Write to the source spreadsheet's Girder item
+    try:
+        girder.addMetadataToItem(config.item_id, {"processing_status": manifest})
+        context.log.info(
+            "Wrote processing manifest to Girder item %s: status=%s",
+            config.item_id,
+            status,
+        )
+    except Exception as exc:
+        context.log.error(
+            "Failed to write processing manifest to Girder item %s: %s",
+            config.item_id,
+            exc,
+        )
+        manifest["write_failed"] = True
+
+    context.add_output_metadata({
+        "status": MetadataValue.text(status),
+        "total_rows": MetadataValue.int(total_rows),
+        "rows_enriched": MetadataValue.int(written_count),
+        "has_issues": MetadataValue.bool(has_issues),
+        "source_item_id": MetadataValue.text(config.item_id),
+    })
+
+    return manifest
 
 
 process_helix_assets_job = define_asset_job(

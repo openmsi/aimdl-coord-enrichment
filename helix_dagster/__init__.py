@@ -1,3 +1,5 @@
+__version__ = "0.2.0"
+
 from dagster import Definitions, EnvVar
 
 from helix_dagster.assets import (
@@ -5,6 +7,7 @@ from helix_dagster.assets import (
     pdv_cross_references,
     pdv_inventory,
     process_helix_assets_job,
+    processing_manifest,
     quality_report,
     raw_experiment_log,
     validated_rows,
@@ -28,6 +31,7 @@ defs = Definitions(
         pdv_cross_references,
         enriched_pdv_metadata,
         quality_report,
+        processing_manifest,
     ],
     asset_checks=[
         zero_inventory,

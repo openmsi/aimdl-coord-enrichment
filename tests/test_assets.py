@@ -99,6 +99,7 @@ def test_asset_dag_loads():
         "pdv_cross_references",
         "enriched_pdv_metadata",
         "quality_report",
+        "processing_manifest",
     }
     for name in expected_assets:
         assert name in asset_keys, f"Missing asset: {name}"
@@ -108,3 +109,78 @@ def test_asset_dag_loads():
         str(ck) for ck in repo.asset_graph.asset_check_keys
     }
     assert len(check_keys) >= 5, f"Expected at least 5 asset checks, got {len(check_keys)}"
+
+
+def test_processing_manifest_clean():
+    """Test manifest for a run with no issues."""
+    from unittest.mock import MagicMock
+    from helix_dagster.assets import processing_manifest as manifest_fn, ExperimentLogConfig
+
+    df = pd.DataFrame([
+        {"Sample_IGSN": "ABCDEF12345", "PDV_FileName": "shot001",
+         "valid_igsn": "ABCDEF12345"},
+    ])
+    validated = {"dataframe": df, "igsn_issues": []}
+    xrefs = {"matches": {0: {"_id": "a1"}}, "pdv_issues": []}
+    enriched = {"written_count": 1, "write_errors": [], "coord_failures": 0}
+    report = {"igsn_issues": [], "pdv_issues": [], "write_errors": [],
+              "summary": {"total_igsn_issues": 0, "total_pdv_issues": 0,
+                          "total_write_errors": 0}}
+
+    config = ExperimentLogConfig(item_id="test_item_123", filename="test.csv")
+    mock_girder = MagicMock()
+
+    ctx = build_asset_context()
+    result = manifest_fn(
+        context=ctx,
+        config=config,
+        quality_report=report,
+        validated_rows=validated,
+        pdv_cross_references=xrefs,
+        enriched_pdv_metadata=enriched,
+        girder=mock_girder,
+    )
+
+    assert result["status"] == "completed_clean"
+    assert result["total_rows"] == 1
+    assert result["rows_enriched"] == 1
+    assert result["issues_summary"]["igsn_invalid"] == 0
+    mock_girder.addMetadataToItem.assert_called_once()
+
+
+def test_processing_manifest_with_warnings():
+    """Test manifest for a run with issues."""
+    from unittest.mock import MagicMock
+    from helix_dagster.assets import processing_manifest as manifest_fn, ExperimentLogConfig
+
+    df = pd.DataFrame([
+        {"Sample_IGSN": "INVALID", "PDV_FileName": "shot001",
+         "valid_igsn": None},
+    ])
+    validated = {
+        "dataframe": df,
+        "igsn_issues": [{"issue": "invalid_format", "value": "INVALID", "row": 0}],
+    }
+    xrefs = {"matches": {}, "pdv_issues": [{"type": "not_found", "row": 0}]}
+    enriched = {"written_count": 0, "write_errors": [], "coord_failures": 0}
+    report = {"igsn_issues": validated["igsn_issues"],
+              "pdv_issues": xrefs["pdv_issues"], "write_errors": [],
+              "summary": {}}
+
+    config = ExperimentLogConfig(item_id="test_item_456", filename="test.csv")
+    mock_girder = MagicMock()
+
+    ctx = build_asset_context()
+    result = manifest_fn(
+        context=ctx,
+        config=config,
+        quality_report=report,
+        validated_rows=validated,
+        pdv_cross_references=xrefs,
+        enriched_pdv_metadata=enriched,
+        girder=mock_girder,
+    )
+
+    assert result["status"] == "completed_with_warnings"
+    assert result["issues_summary"]["igsn_invalid"] == 1
+    assert result["issues_summary"]["pdv_not_found"] == 1
