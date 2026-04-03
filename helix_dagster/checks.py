@@ -13,13 +13,14 @@ from dagster import (
 )
 
 
-@asset_check(asset="pdv_inventory")
-def zero_inventory(context, pdv_inventory):
-    """ERROR if the PDV inventory returned zero items.
+@asset_check(asset="pdv_trace_inventory")
+def zero_inventory(context, pdv_trace_inventory):
+    """ERROR if the PDV trace inventory returned zero items.
 
-    This typically means the PDV folder is empty or misconfigured.
+    This typically means meta.igsn has not been tagged on PDV files yet,
+    so the /aimdl/datafiles endpoint returns nothing.
     """
-    count = len(pdv_inventory)
+    count = len(pdv_trace_inventory)
     passed = count > 0
     return AssetCheckResult(
         passed=passed,
@@ -28,7 +29,7 @@ def zero_inventory(context, pdv_inventory):
         description=(
             f"Inventory contains {count} items."
             if passed
-            else "Inventory is EMPTY. Check PDV folder configuration."
+            else "Inventory is EMPTY. Check that meta.igsn is tagged on PDV files."
         ),
     )
 

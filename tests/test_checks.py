@@ -15,14 +15,14 @@ from helix_dagster.checks import (
 
 def test_zero_inventory_fails_on_empty():
     ctx = build_asset_context()
-    result = zero_inventory(ctx, pdv_inventory=[])
+    result = zero_inventory(ctx, pdv_trace_inventory=[])
     assert not result.passed
     assert result.severity.value == "ERROR"
 
 
 def test_zero_inventory_passes_with_items():
     ctx = build_asset_context()
-    result = zero_inventory(ctx, pdv_inventory=[{"_id": "a"}])
+    result = zero_inventory(ctx, pdv_trace_inventory=[{"_id": "a"}])
     assert result.passed
 
 

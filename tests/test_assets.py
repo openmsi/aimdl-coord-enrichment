@@ -53,8 +53,8 @@ def test_pdv_cross_references_pure():
     )
 
     pdv_items = [
-        {"name": "shot001_ch1.tdms", "_id": "a1"},
-        {"name": "shot002_ch1.tdms", "_id": "b1"},
+        {"name": "shot001_ch1.tdms", "_id": "a1", "meta": {"igsn": "ABCDEF12345", "data_type": "pdv_trace"}},
+        {"name": "shot002_ch1.tdms", "_id": "b1", "meta": {"igsn": "ABCDEF12346", "data_type": "pdv_trace"}},
     ]
 
     validated = {"dataframe": df, "igsn_issues": []}
@@ -63,7 +63,7 @@ def test_pdv_cross_references_pure():
     result = pdv_cross_references_fn(
         context=ctx,
         validated_rows=validated,
-        pdv_inventory=pdv_items,
+        pdv_trace_inventory=pdv_items,
     )
 
     matches = result["matches"]
@@ -94,7 +94,7 @@ def test_asset_dag_loads():
 
     expected_assets = {
         "raw_experiment_log",
-        "pdv_inventory",
+        "pdv_trace_inventory",
         "validated_rows",
         "pdv_cross_references",
         "enriched_pdv_metadata",
@@ -110,6 +110,30 @@ def test_asset_dag_loads():
         str(ck) for ck in repo.asset_graph.asset_check_keys
     }
     assert len(check_keys) >= 5, f"Expected at least 5 asset checks, got {len(check_keys)}"
+
+
+def test_igsn_mismatch_detection():
+    """Verify that IGSN mismatches between spreadsheet and Girder item are flagged."""
+    df = pd.DataFrame([
+        {"Sample_IGSN": "ABCDEF12345", "PDV_FileName": "shot001",
+         "valid_igsn": "ABCDEF12345"},
+    ])
+    pdv_items = [
+        {"name": "shot001_ch1.tdms", "_id": "a1",
+         "meta": {"igsn": "XXXXXX99999", "data_type": "pdv_trace"}},
+    ]
+    validated = {"dataframe": df, "igsn_issues": []}
+    ctx = build_asset_context()
+    result = pdv_cross_references_fn(
+        context=ctx,
+        validated_rows=validated,
+        pdv_trace_inventory=pdv_items,
+    )
+    issues = result["pdv_issues"]
+    mismatch_issues = [i for i in issues if i["type"] == "igsn_mismatch"]
+    assert len(mismatch_issues) == 1
+    assert mismatch_issues[0]["spreadsheet_igsn"] == "ABCDEF12345"
+    assert mismatch_issues[0]["item_igsn"] == "XXXXXX99999"
 
 
 def test_quality_report_alpss_completeness():
