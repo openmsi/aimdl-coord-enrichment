@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "helix_dagster"
-version = "0.1.0"
+version = "0.2.0"
+description = "Dagster pipeline for HELIX experiment metadata extraction and enrichment"
 dependencies = [
     "dagster",
     "dagster-webserver",
@@ -16,6 +17,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "dagster[test]"]
+
+[tool.setuptools.packages.find]
+include = ["helix_dagster*"]
 
 [tool.dagster]
 module_name = "helix_dagster"
