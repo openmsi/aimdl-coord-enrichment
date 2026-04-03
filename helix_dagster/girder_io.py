@@ -9,7 +9,12 @@ from helix_dagster.constants import AIMDL_PAGE_LIMIT
 
 
 def list_all_spreadsheet_items(client, folder_id):
-    """Recursively list all CSV/XLSX items in a Girder folder."""
+    """Recursively list all CSV/XLSX items in a Girder folder.
+
+    .. deprecated::
+        Use list_recent_spreadsheets() for sensor polling. This function
+        performs a recursive folder crawl that scales poorly.
+    """
     items = client.get(
         "item",
         parameters={"folderId": folder_id, "limit": 100000},
@@ -22,6 +27,39 @@ def list_all_spreadsheet_items(client, folder_id):
     for subfolder in subfolders:
         result.extend(list_all_spreadsheet_items(client, subfolder["_id"]))
     return result
+
+
+def list_recent_spreadsheets(client, folder_id, limit=100):
+    """List recently created spreadsheet items in a Girder folder.
+
+    Unlike list_all_spreadsheet_items(), this does NOT recursively walk
+    subfolders. It queries items sorted by creation date (newest first)
+    and filters for CSV/XLSX extensions.
+
+    Parameters
+    ----------
+    client : GirderClient
+        Authenticated Girder client.
+    folder_id : str
+        The Girder folder ID to search.
+    limit : int
+        Maximum number of items to return.
+
+    Returns
+    -------
+    list[dict]
+        Girder item dicts for spreadsheet files, newest first.
+    """
+    items = client.get(
+        "item",
+        parameters={
+            "folderId": folder_id,
+            "sort": "created",
+            "sortdir": -1,
+            "limit": limit,
+        },
+    )
+    return [i for i in items if i["name"].endswith((".csv", ".xlsx", ".xls"))]
 
 
 def download_and_read(client, item_id, filename):
