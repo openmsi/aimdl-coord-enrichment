@@ -23,7 +23,9 @@ back to Girder items.
 - Python ≥3.9
 
 ## Workflow
-1. Sensor polls a Girder folder for new experiment log spreadsheets (CSV/XLSX)
+1. Sensor polls a Girder folder for recent experiment log spreadsheets (CSV/XLSX)
+   using a sorted recent-items query (not recursive folder crawl). Spreadsheets
+   already processed cleanly (per `meta.processing_status`) are skipped.
 2. Pipeline downloads, parses, validates IGSNs, cross-references PDV files,
    transforms coordinates, writes enriched metadata to Girder
 3. Quality issues (missing IGSNs, unmatched PDV files, IGSN mismatches) are

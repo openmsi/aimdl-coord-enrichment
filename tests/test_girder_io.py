@@ -6,6 +6,7 @@ from helix_dagster.girder_io import (
     fetch_aimdl_datatypes,
     fetch_aimdl_datafiles,
     fetch_all_aimdl_datafiles,
+    list_recent_spreadsheets,
 )
 
 
@@ -20,6 +21,28 @@ def _make_item(name, igsn, data_type, item_id=None):
         "folderId": "folder123",
         "lowerName": name.lower(),
     }
+
+
+def test_list_recent_spreadsheets():
+    client = MagicMock()
+    client.get.return_value = [
+        {"name": "log_2025.csv", "_id": "c1", "created": "2025-03-01T00:00:00Z"},
+        {"name": "data.tdms", "_id": "c2", "created": "2025-03-01T00:00:00Z"},
+        {"name": "results.xlsx", "_id": "c3", "created": "2025-02-28T00:00:00Z"},
+    ]
+    result = list_recent_spreadsheets(client, "folder123", limit=50)
+    assert len(result) == 2  # only .csv and .xlsx, not .tdms
+    assert result[0]["name"] == "log_2025.csv"
+    assert result[1]["name"] == "results.xlsx"
+    client.get.assert_called_once_with(
+        "item",
+        parameters={
+            "folderId": "folder123",
+            "sort": "created",
+            "sortdir": -1,
+            "limit": 50,
+        },
+    )
 
 
 def test_fetch_datatypes():
