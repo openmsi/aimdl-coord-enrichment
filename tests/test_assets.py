@@ -98,6 +98,7 @@ def test_asset_dag_loads():
         "validated_rows",
         "pdv_cross_references",
         "enriched_pdv_metadata",
+        "alpss_results_inventory",
         "quality_report",
         "processing_manifest",
     }
@@ -109,6 +110,40 @@ def test_asset_dag_loads():
         str(ck) for ck in repo.asset_graph.asset_check_keys
     }
     assert len(check_keys) >= 5, f"Expected at least 5 asset checks, got {len(check_keys)}"
+
+
+def test_quality_report_alpss_completeness():
+    """Verify quality_report includes ALPSS completeness metrics."""
+    df = pd.DataFrame([
+        {"Sample_IGSN": "ABCDEF12345", "PDV_FileName": "shot001",
+         "valid_igsn": "ABCDEF12345"},
+        {"Sample_IGSN": "ABCDEF12346", "PDV_FileName": "shot002",
+         "valid_igsn": "ABCDEF12346"},
+    ])
+    validated = {"dataframe": df, "igsn_issues": []}
+    pdv_xrefs = {
+        "matches": {0: {"_id": "a1"}, 1: {"_id": "b1"}},
+        "pdv_issues": [],
+    }
+    enriched = {"written_count": 2, "write_errors": [], "coord_failures": 0}
+    alpss_items = [
+        {"meta": {"igsn": "ABCDEF12345", "data_type": "pdv_alpss_result"}},
+        # ABCDEF12346 has no ALPSS result
+    ]
+
+    ctx = build_asset_context()
+    from helix_dagster.assets import quality_report as quality_report_fn
+    report = quality_report_fn(
+        context=ctx,
+        validated_rows=validated,
+        pdv_cross_references=pdv_xrefs,
+        enriched_pdv_metadata=enriched,
+        alpss_results_inventory=alpss_items,
+    )
+    assert report["alpss_completeness"]["igsns_with_alpss_results"] == 1
+    assert report["alpss_completeness"]["igsns_without_alpss_results"] == 1
+    assert "ABCDEF12346" in report["alpss_completeness"]["missing_igsns"]
+    assert report["summary"]["alpss_coverage_pct"] == 50.0
 
 
 def test_processing_manifest_clean():
@@ -124,8 +159,10 @@ def test_processing_manifest_clean():
     xrefs = {"matches": {0: {"_id": "a1"}}, "pdv_issues": []}
     enriched = {"written_count": 1, "write_errors": [], "coord_failures": 0}
     report = {"igsn_issues": [], "pdv_issues": [], "write_errors": [],
+              "alpss_completeness": {"matched_igsns": 1, "igsns_with_alpss_results": 1,
+                                     "igsns_without_alpss_results": 0, "missing_igsns": []},
               "summary": {"total_igsn_issues": 0, "total_pdv_issues": 0,
-                          "total_write_errors": 0}}
+                          "total_write_errors": 0, "alpss_coverage_pct": 100.0}}
 
     config = ExperimentLogConfig(item_id="test_item_123", filename="test.csv")
     mock_girder = MagicMock()
@@ -165,7 +202,9 @@ def test_processing_manifest_with_warnings():
     enriched = {"written_count": 0, "write_errors": [], "coord_failures": 0}
     report = {"igsn_issues": validated["igsn_issues"],
               "pdv_issues": xrefs["pdv_issues"], "write_errors": [],
-              "summary": {}}
+              "alpss_completeness": {"matched_igsns": 0, "igsns_with_alpss_results": 0,
+                                     "igsns_without_alpss_results": 0, "missing_igsns": []},
+              "summary": {"alpss_coverage_pct": 0.0}}
 
     config = ExperimentLogConfig(item_id="test_item_456", filename="test.csv")
     mock_girder = MagicMock()
