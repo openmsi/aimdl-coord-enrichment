@@ -3,6 +3,7 @@ __version__ = "0.2.0"
 from dagster import Definitions, EnvVar
 
 from helix_dagster.assets import (
+    alpss_results_inventory,
     enriched_pdv_metadata,
     pdv_cross_references,
     pdv_inventory,
@@ -30,6 +31,7 @@ defs = Definitions(
         validated_rows,
         pdv_cross_references,
         enriched_pdv_metadata,
+        alpss_results_inventory,
         quality_report,
         processing_manifest,
     ],

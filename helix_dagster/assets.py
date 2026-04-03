@@ -12,9 +12,9 @@ from dagster import (
 )
 
 from helix_dagster import __version__ as PIPELINE_VERSION
-from helix_dagster.constants import COLUMN_MAP, PDV_FOLDER_ID
+from helix_dagster.constants import ALPSS_RESULT_DATA_TYPE, COLUMN_MAP, PDV_FOLDER_ID
 from helix_dagster.coordinates import transform_station_to_sample
-from helix_dagster.girder_io import download_and_read, nan_to_none
+from helix_dagster.girder_io import download_and_read, fetch_all_aimdl_datafiles, nan_to_none
 from helix_dagster.matching import match_pdv_file
 from helix_dagster.resources import GirderConnection
 from helix_dagster.validation import NpEncoder, validate_igsn
@@ -194,35 +194,92 @@ def enriched_pdv_metadata(
 
 
 @asset
+def alpss_results_inventory(
+    context: AssetExecutionContext,
+    girder: GirderConnection,
+) -> list:
+    """Fetch ALPSS result items via the /aimdl/datafiles endpoint.
+
+    Returns items with meta.data_type='pdv_alpss_result'. Used for
+    quality reporting on ALPSS processing completeness.
+    """
+    items = fetch_all_aimdl_datafiles(girder, ALPSS_RESULT_DATA_TYPE)
+
+    igsns = set()
+    for item in items:
+        igsn = item.get("meta", {}).get("igsn")
+        if igsn:
+            igsns.add(igsn)
+
+    context.add_output_metadata({
+        "item_count": MetadataValue.int(len(items)),
+        "unique_igsns": MetadataValue.int(len(igsns)),
+        "data_type": MetadataValue.text(ALPSS_RESULT_DATA_TYPE),
+    })
+    return items
+
+
+@asset
 def quality_report(
     context: AssetExecutionContext,
     validated_rows: dict,
     pdv_cross_references: dict,
     enriched_pdv_metadata: dict,
+    alpss_results_inventory: list,
 ) -> dict:
-    """Aggregate all issues from upstream assets into a single report."""
+    """Aggregate all issues and ALPSS completeness metrics."""
     igsn_issues = validated_rows["igsn_issues"]
     pdv_issues = pdv_cross_references["pdv_issues"]
     write_errors = enriched_pdv_metadata["write_errors"]
+    matches = pdv_cross_references["matches"]
+
+    # ALPSS completeness: which matched PDV traces have ALPSS results?
+    alpss_igsns = set()
+    for item in alpss_results_inventory:
+        igsn = item.get("meta", {}).get("igsn")
+        if igsn:
+            alpss_igsns.add(igsn)
+
+    matched_igsns = set()
+    df = validated_rows["dataframe"]
+    for row_idx in matches:
+        row_igsn = df.loc[row_idx].get("valid_igsn")
+        if row_igsn:
+            matched_igsns.add(row_igsn)
+
+    igsns_with_alpss = matched_igsns & alpss_igsns
+    igsns_without_alpss = matched_igsns - alpss_igsns
 
     report = {
         "igsn_issues": igsn_issues,
         "pdv_issues": pdv_issues,
         "write_errors": write_errors,
+        "alpss_completeness": {
+            "matched_igsns": len(matched_igsns),
+            "igsns_with_alpss_results": len(igsns_with_alpss),
+            "igsns_without_alpss_results": len(igsns_without_alpss),
+            "missing_igsns": sorted(igsns_without_alpss),
+        },
         "summary": {
             "total_igsn_issues": len(igsn_issues),
             "total_pdv_issues": len(pdv_issues),
             "total_write_errors": len(write_errors),
+            "alpss_coverage_pct": (
+                round(100 * len(igsns_with_alpss) / len(matched_igsns), 1)
+                if matched_igsns else 0.0
+            ),
         },
     }
 
-    context.add_output_metadata(
-        {
-            "total_igsn_issues": MetadataValue.int(len(igsn_issues)),
-            "total_pdv_issues": MetadataValue.int(len(pdv_issues)),
-            "total_write_errors": MetadataValue.int(len(write_errors)),
-        }
-    )
+    context.add_output_metadata({
+        "total_igsn_issues": MetadataValue.int(len(igsn_issues)),
+        "total_pdv_issues": MetadataValue.int(len(pdv_issues)),
+        "total_write_errors": MetadataValue.int(len(write_errors)),
+        "alpss_coverage_pct": MetadataValue.float(
+            report["summary"]["alpss_coverage_pct"]
+        ),
+        "igsns_without_alpss": MetadataValue.int(len(igsns_without_alpss)),
+    })
     return report
 
 
