@@ -12,7 +12,9 @@ back to Girder items.
 - **Girder** is the data management platform (REST API at data.htmdec.org)
 - **Dagster** orchestrates the metadata extraction pipeline
 - **coordinate-transformer** (`aimdl_coordinate_systems` package) handles
-  instrument-to-sample coordinate transformations
+  instrument-to-sample coordinate transformations. Supports versioned
+  transforms with timestamp-based version selection (v0.3.0+), though
+  `coordinates.py` does not yet pass timestamps.
 - **IGSN** persistent identifiers link measurements to physical samples
 - **`/aimdl/datafiles`** Girder endpoint provides indexed queries by
   `meta.data_type` (no folder crawling)

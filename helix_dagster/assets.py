@@ -167,7 +167,12 @@ def enriched_pdv_metadata(
     validated_rows: dict,
     girder: GirderConnection,
 ) -> dict:
-    """Write coordinate and IGSN metadata to matched Girder PDV items."""
+    """Write coordinate and flyer position metadata to matched Girder PDV items.
+
+    For each matched PDV item, writes: Flyer_Row, Flyer_Column,
+    Station_X, Station_Y (instrument coordinates), and Sample_X,
+    Sample_Y (transformed sample-frame coordinates).
+    """
     df = validated_rows["dataframe"]
     matches = pdv_cross_references["matches"]
 
@@ -354,9 +359,14 @@ def processing_manifest(
     has_issues = any(v > 0 for v in issues_summary.values())
     status = "completed_with_warnings" if has_issues else "completed_clean"
 
+    try:
+        run_id = context.run.run_id
+    except Exception:
+        run_id = "direct-invocation"
+
     manifest = {
         "last_processed": datetime.now(timezone.utc).isoformat(),
-        "dagster_run_id": context.run.run_id,
+        "dagster_run_id": run_id,
         "pipeline_version": PIPELINE_VERSION,
         "total_rows": total_rows,
         "rows_valid_igsn": valid_igsn_count,

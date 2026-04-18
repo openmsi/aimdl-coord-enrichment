@@ -9,11 +9,11 @@ a [Girder](https://girder.readthedocs.io/) data management server, transforms
 instrument coordinates into sample-frame coordinates, and writes enriched
 metadata back to Girder items.
 
-> **Note:** The `coordinate-transformer` package is not yet reliably installable
-> from PyPI. As a workaround, install it from a local clone of
+> **Note:** The `coordinate-transformer` package is available on
+> [PyPI](https://pypi.org/project/coordinate-transformer/). For development
+> against the latest changes, install from a local clone of
 > [`aimdl_coordinate_systems`](https://github.com/htmdec/aimdl_coordinate_systems)
-> with `pip install -e /path/to/aimdl_coordinate_systems` before installing
-> this package.
+> with `pip install -e /path/to/aimdl_coordinate_systems`.
 
 ## Architecture
 
@@ -52,7 +52,7 @@ raw_experiment_log   pdv_trace_inventory   alpss_results_inventory
 | `pdv_trace_inventory` | Fetches PDV trace items via `/aimdl/datafiles` (indexed query, no folder crawl) |
 | `validated_rows` | Validates IGSN identifiers on each row (pure transformation) |
 | `pdv_cross_references` | Matches PDV filenames to inventory items, checks IGSN consistency |
-| `enriched_pdv_metadata` | Writes coordinate and IGSN metadata to matched Girder items |
+| `enriched_pdv_metadata` | Writes coordinate and flyer position metadata to matched Girder items |
 | `alpss_results_inventory` | Fetches ALPSS result items via `/aimdl/datafiles` for completeness reporting |
 | `quality_report` | Aggregates all issues and ALPSS completeness metrics |
 | `processing_manifest` | Writes a structured processing record to the source Girder item |
