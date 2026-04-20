@@ -19,11 +19,13 @@ This module has two halves:
 
 from __future__ import annotations
 
+import io
 import json
 import re
+from datetime import datetime
 from typing import Any
 
-from helix_dagster.instruments.types import ResolutionError
+from helix_dagster.instruments.types import LeafResolution, ResolutionError
 
 _SCAN_POINT_INDEX_RE = re.compile(r"^scan_point_(\d+)(?:[._]|$)")
 
@@ -112,3 +114,154 @@ def scan_point_coords(
         )
     x, y = sp[index]
     return float(x), float(y)
+
+
+# ---------------------------------------------------------------------------
+# Girder-backed helpers
+# ---------------------------------------------------------------------------
+
+
+def find_run_folder_id(item: dict, girder) -> str:
+    """Return the Girder folder id of the run folder containing *item*.
+
+    Raw items live in ``<run_folder>/raw/``; derived items may live at
+    the run-folder root. If the item's immediate folder is named
+    ``"raw"``, step up one level; otherwise return the folder as-is.
+    """
+    folder_id = item.get("folderId")
+    if not folder_id:
+        raise ResolutionError(
+            f"item {item.get('_id')} has no folderId"
+        )
+    folder = girder.get(f"folder/{folder_id}")
+    if folder.get("name") == "raw":
+        parent_id = folder.get("parentId")
+        if not parent_id:
+            raise ResolutionError(
+                f"raw folder {folder_id} has no parentId"
+            )
+        return parent_id
+    return folder_id
+
+
+def fetch_instructions_for_run(
+    run_folder_id: str, girder
+) -> tuple[dict, dict]:
+    """Find and fetch instructions.txt inside a run folder.
+
+    Returns ``(instructions_item, parsed_json)``.
+    """
+    items = girder.get(
+        "item", parameters={"folderId": run_folder_id, "limit": 1000}
+    )
+    instr_items = [it for it in items if it.get("name") == "instructions.txt"]
+    if len(instr_items) == 0:
+        raise ResolutionError(
+            f"run folder {run_folder_id} has no instructions.txt item"
+        )
+    if len(instr_items) > 1:
+        raise ResolutionError(
+            f"run folder {run_folder_id} has multiple instructions.txt items "
+            f"({len(instr_items)}); ambiguous."
+        )
+    instr_item = instr_items[0]
+    files = girder.get(f"item/{instr_item['_id']}/files")
+    if not files:
+        raise ResolutionError(
+            f"instructions.txt item {instr_item['_id']} has no files"
+        )
+    buf = io.BytesIO()
+    girder.downloadFile(files[0]["_id"], buf)
+    buf.seek(0)
+    parsed = parse_instructions_json(buf.read())
+    return instr_item, parsed
+
+
+def _experiment_date(item: dict) -> datetime:
+    """Return item's ``meta.experiment_date`` as a tz-aware datetime."""
+    raw = (item.get("meta") or {}).get("experiment_date")
+    if raw is None:
+        raise ResolutionError(
+            f"item {item.get('_id')} missing meta.experiment_date; "
+            "cannot select transform version"
+        )
+    try:
+        s = raw[:-1] + "+00:00" if isinstance(raw, str) and raw.endswith("Z") else raw
+        ts = datetime.fromisoformat(s) if isinstance(s, str) else s
+    except (TypeError, ValueError) as exc:
+        raise ResolutionError(
+            f"item {item.get('_id')} meta.experiment_date={raw!r} unparseable: {exc}"
+        ) from exc
+    if ts.tzinfo is None:
+        raise ResolutionError(
+            f"item {item.get('_id')} meta.experiment_date={raw!r} is naive; must include timezone"
+        )
+    return ts
+
+
+def resolve_leaf_coords(item: dict, girder) -> LeafResolution:
+    """End-to-end leaf coordinate resolver for MAXIMA xrd_raw / xrf_raw."""
+    name = item.get("name", "")
+    index = parse_scan_point_index(name)
+    if index is None:
+        raise ResolutionError(
+            f"item {item.get('_id')} name {name!r} does not encode a scan_point index"
+        )
+    run_folder_id = find_run_folder_id(item, girder)
+    instr_item, parsed = fetch_instructions_for_run(run_folder_id, girder)
+    x, y = scan_point_coords(parsed, index)
+    ts = _experiment_date(item)
+    return LeafResolution(
+        station_x=x,
+        station_y=y,
+        source_timestamp=ts,
+        source_timestamp_origin="meta.experiment_date",
+        station_coord_source={
+            "kind": "maxima_instructions",
+            "instructions_item_id": instr_item["_id"],
+            "scan_point_index": index,
+        },
+    )
+
+
+def find_master_h5_item_id(
+    run_folder_id: str, index: int, girder
+) -> str | None:
+    """Return the ``_id`` of ``scan_point_<index>_master.h5`` in the run
+    folder's ``raw/`` subfolder, or ``None`` if missing.
+    """
+    subfolders = girder.get(
+        "folder",
+        parameters={"parentId": run_folder_id, "parentType": "folder", "limit": 1000},
+    )
+    raw_folders = [f for f in subfolders if f.get("name") == "raw"]
+    if len(raw_folders) != 1:
+        return None
+    raw_id = raw_folders[0]["_id"]
+    target = f"scan_point_{index}_master.h5"
+    items = girder.get(
+        "item", parameters={"folderId": raw_id, "limit": 1000}
+    )
+    for it in items:
+        if it.get("name") == target:
+            return it.get("_id")
+    return None
+
+
+def heal_maxima_derived_parent(
+    derived_item: dict, girder
+) -> str | None:
+    """Determine the correct parent item id for a MAXIMA xrd_derived item.
+
+    Returns the ``scan_point_<i>_master.h5`` item id if found, else
+    ``None``. Does NOT consult or mutate prov metadata.
+    """
+    name = derived_item.get("name", "")
+    index = parse_scan_point_index(name)
+    if index is None:
+        return None
+    try:
+        run_folder_id = find_run_folder_id(derived_item, girder)
+    except ResolutionError:
+        return None
+    return find_master_h5_item_id(run_folder_id, index, girder)
