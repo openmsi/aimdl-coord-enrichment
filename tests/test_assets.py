@@ -313,3 +313,98 @@ def test_enriched_pdv_metadata_writes_provenance():
     assert result["naive_timestamps_count"] == 0
     assert result["written_count"] == 1
     assert result["version_counter"]
+
+
+def test_enriched_pdv_metadata_version_boundary_dispatch():
+    """Two rows with identical station coords and different timestamps
+    straddling HELIX v1/v2 must produce different Sample_X/Y values.
+    """
+    import pytest
+    from datetime import datetime, timezone
+    from unittest.mock import MagicMock
+    from dagster import build_asset_context
+    from helix_dagster.assets import (
+        enriched_pdv_metadata as enriched_fn,
+        ExperimentLogConfig,
+    )
+    from helix_dagster.coordinates import _COORD_TRANSFORMER
+
+    if _COORD_TRANSFORMER is None:
+        pytest.skip("COORD_TRANSFORMS_YAML not available")
+
+    # Two rows: same station coords, different timestamps.
+    # Pick an (x,y) where v1 and v2 predict clearly different outputs.
+    # Station (8, 8):  v1 -> (32, 8);  v2 -> (8, 8).
+    df = pd.DataFrame([
+        {
+            "Timestamp": "2025-06-01T12:00:00+00:00",  # pre-2026-04-01 -> v1
+            "Sample_IGSN": "ABCDEF00001",
+            "valid_igsn": "ABCDEF00001",
+            "PDV_FileName": "shot_v1_ch1",
+            "Flyer_Row": 1,
+            "Flyer_Column": 1,
+            "Flyer_X_Position_Final_mm": 8.0,
+            "Flyer_Y_Position_Final_mm": 8.0,
+        },
+        {
+            "Timestamp": "2026-05-01T12:00:00+00:00",  # post-boundary -> v2
+            "Sample_IGSN": "ABCDEF00002",
+            "valid_igsn": "ABCDEF00002",
+            "PDV_FileName": "shot_v2_ch1",
+            "Flyer_Row": 1,
+            "Flyer_Column": 2,
+            "Flyer_X_Position_Final_mm": 8.0,
+            "Flyer_Y_Position_Final_mm": 8.0,
+        },
+    ])
+
+    validated = {"dataframe": df, "igsn_issues": []}
+    matches = {
+        0: {"_id": "itemv1", "meta": {"igsn": "ABCDEF00001"}, "name": "shot_v1_ch1.csv"},
+        1: {"_id": "itemv2", "meta": {"igsn": "ABCDEF00002"}, "name": "shot_v2_ch1.csv"},
+    }
+    xrefs = {"matches": matches, "pdv_issues": []}
+
+    captured = []
+    mock_girder = MagicMock()
+    mock_girder.addMetadataToItem.side_effect = lambda item_id, meta: captured.append(
+        (item_id, meta)
+    )
+
+    config = ExperimentLogConfig(item_id="src_sheet_item", filename="test.csv")
+    ctx = build_asset_context()
+    result = enriched_fn(
+        context=ctx,
+        config=config,
+        pdv_cross_references=xrefs,
+        validated_rows=validated,
+        girder=mock_girder,
+    )
+
+    assert result["written_count"] == 2
+    assert len(captured) == 2
+
+    by_id = {iid: m for iid, m in captured}
+    v1_payload = by_id["itemv1"]
+    v2_payload = by_id["itemv2"]
+
+    # Provenance records the resolved version per row
+    assert "v1" in v1_payload["coord_provenance"]["transform_version"]
+    assert "v2" in v2_payload["coord_provenance"]["transform_version"]
+
+    # Same inputs, different transforms → different Sample_X/Y
+    assert (v1_payload["Sample_X"], v1_payload["Sample_Y"]) != (
+        v2_payload["Sample_X"],
+        v2_payload["Sample_Y"],
+    )
+
+    # Exact values per the YAML calibration points.
+    # Station (8, 8): v1 -> (32, 8),  v2 -> (8, 8)
+    assert v1_payload["Sample_X"] == pytest.approx(32.0, abs=1e-4)
+    assert v1_payload["Sample_Y"] == pytest.approx(8.0, abs=1e-4)
+    assert v2_payload["Sample_X"] == pytest.approx(8.0, abs=1e-4)
+    assert v2_payload["Sample_Y"] == pytest.approx(8.0, abs=1e-4)
+
+    # The asset's version_counter should reflect both versions
+    assert result["version_counter"].get("HELIX/v1", 0) == 1
+    assert result["version_counter"].get("HELIX/v2", 0) == 1
