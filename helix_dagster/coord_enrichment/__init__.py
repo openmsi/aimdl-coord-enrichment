@@ -43,6 +43,12 @@ from helix_dagster.coord_enrichment.inheritance import (
     inherit_from_parent,
     inherited_station_coord_source,
 )
+from helix_dagster.coord_enrichment.helix_alpss_leaf import (
+    HELIX_ALPSS_PARTITIONS,
+    enriched_helix_alpss,
+    enrichment_success_rate_helix_alpss,
+    no_coord_transform_failures_helix_alpss,
+)
 from helix_dagster.coord_enrichment.overwrite import should_write
 from helix_dagster.coord_enrichment.report import coord_enrichment_report
 from helix_dagster.coord_enrichment.manifest import coord_enrichment_manifest
@@ -59,6 +65,10 @@ __all__ = [
     "enriched_maxima_raw",
     "enrichment_success_rate_maxima_raw",
     "no_coord_transform_failures_maxima_raw",
+    "HELIX_ALPSS_PARTITIONS",
+    "enriched_helix_alpss",
+    "enrichment_success_rate_helix_alpss",
+    "no_coord_transform_failures_helix_alpss",
     "InheritedCoords",
     "inherit_from_parent",
     "inherited_station_coord_source",

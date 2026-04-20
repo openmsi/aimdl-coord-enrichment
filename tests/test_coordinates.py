@@ -2,7 +2,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from helix_dagster.coordinates import transform_station_to_sample, _COORD_TRANSFORMER
+from helix_dagster.coordinates import (
+    transform_station_to_sample,
+    transform_with_named_version,
+    _COORD_TRANSFORMER,
+)
 
 
 def test_valid_transform():
@@ -77,3 +81,50 @@ def test_no_timestamp_returns_current_version():
     sx, sy, name = transform_station_to_sample(10.0, 20.0)
     assert name is not None
     assert "v2" in name
+
+
+# --- transform_with_named_version tests ---
+
+
+def test_transform_with_named_version_happy_path_v1():
+    if _COORD_TRANSFORMER is None:
+        pytest.skip("COORD_TRANSFORMS_YAML not available")
+    sx, sy = transform_with_named_version("HELIX", "HELIX/v1", 8.0, 8.0)
+    assert sx is not None and sy is not None
+    assert sx == pytest.approx(32.0, abs=0.01)
+    assert sy == pytest.approx(8.0, abs=0.01)
+
+
+def test_transform_with_named_version_happy_path_v2():
+    if _COORD_TRANSFORMER is None:
+        pytest.skip("COORD_TRANSFORMS_YAML not available")
+    sx, sy = transform_with_named_version("HELIX", "HELIX/v2", 8.0, 8.0)
+    assert sx is not None and sy is not None
+    assert sx == pytest.approx(8.0, abs=0.01)
+    assert sy == pytest.approx(8.0, abs=0.01)
+
+
+def test_transform_with_named_version_unknown_version_returns_none():
+    if _COORD_TRANSFORMER is None:
+        pytest.skip("COORD_TRANSFORMS_YAML not available")
+    sx, sy = transform_with_named_version("HELIX", "HELIX/v99", 8.0, 8.0)
+    assert sx is None
+    assert sy is None
+
+
+def test_transform_with_named_version_none_input_returns_none():
+    sx, sy = transform_with_named_version("HELIX", "HELIX/v1", None, 8.0)
+    assert sx is None
+    assert sy is None
+
+
+def test_transform_with_named_version_missing_transformer_returns_none():
+    import helix_dagster.coordinates as coord_mod
+    original = coord_mod._COORD_TRANSFORMER
+    try:
+        coord_mod._COORD_TRANSFORMER = None
+        sx, sy = transform_with_named_version("HELIX", "HELIX/v1", 8.0, 8.0)
+        assert sx is None
+        assert sy is None
+    finally:
+        coord_mod._COORD_TRANSFORMER = original
