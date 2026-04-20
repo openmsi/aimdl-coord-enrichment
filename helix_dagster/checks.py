@@ -133,16 +133,43 @@ def enrichment_success_rate(context, enriched_pdv_metadata, pdv_cross_references
 
 @asset_check(asset="enriched_pdv_metadata")
 def coord_transform_check(context, enriched_pdv_metadata):
-    """WARN if any coordinate transformations failed."""
+    """WARN on coordinate transform issues.
+
+    Fails (WARN) if any of:
+      - coord_failures > 0         (transform raised)
+      - version_counter is empty while writes happened
+      - yaml_sha256 is None         (YAML could not be hashed)
+    """
     failures = enriched_pdv_metadata.get("coord_failures", 0)
-    passed = failures == 0
+    version_counter = enriched_pdv_metadata.get("version_counter", {}) or {}
+    yaml_sha256 = enriched_pdv_metadata.get("yaml_sha256")
+    written_count = enriched_pdv_metadata.get("written_count", 0)
+
+    unresolved_versions = written_count > 0 and not version_counter
+    missing_sha = yaml_sha256 is None
+
+    passed = (failures == 0) and (not unresolved_versions) and (not missing_sha)
+
+    problems = []
+    if failures > 0:
+        problems.append(f"{failures} transform failures")
+    if unresolved_versions:
+        problems.append("no transform version resolved for any write")
+    if missing_sha:
+        problems.append("yaml_sha256 unavailable (provenance incomplete)")
+
+    description = (
+        "Transforms OK: " + ", ".join(f"{k}={v}" for k, v in sorted(version_counter.items()))
+        if passed else "; ".join(problems)
+    )
+
     return AssetCheckResult(
         passed=passed,
         severity=AssetCheckSeverity.WARN,
-        metadata={"coord_failures": failures},
-        description=(
-            "All coordinate transforms succeeded."
-            if passed
-            else f"{failures} coordinate transform failure(s). Check COORD_TRANSFORMS_YAML."
-        ),
+        metadata={
+            "coord_failures": failures,
+            "version_counter": str(sorted(version_counter.items())),
+            "yaml_sha256_present": not missing_sha,
+        },
+        description=description,
     )

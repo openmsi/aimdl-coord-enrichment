@@ -109,15 +109,51 @@ def test_enrichment_success_rate_warns():
     assert not result.passed  # 5/10 = 50%
 
 
-def test_coord_transform_check_passes():
+def test_coord_transform_check_all_ok():
     ctx = build_asset_context()
-    enriched = {"written_count": 10, "write_errors": [], "coord_failures": 0}
+    enriched = {
+        "coord_failures": 0,
+        "version_counter": {"HELIX/v2": 3},
+        "yaml_sha256": "abc" * 21 + "a",
+        "written_count": 3,
+    }
     result = coord_transform_check(ctx, enriched_pdv_metadata=enriched)
-    assert result.passed
+    assert result.passed is True
 
 
-def test_coord_transform_check_warns():
+def test_coord_transform_check_failures():
     ctx = build_asset_context()
-    enriched = {"written_count": 10, "write_errors": [], "coord_failures": 3}
+    enriched = {
+        "coord_failures": 2,
+        "version_counter": {"HELIX/v2": 1},
+        "yaml_sha256": "abc" * 21 + "a",
+        "written_count": 3,
+    }
     result = coord_transform_check(ctx, enriched_pdv_metadata=enriched)
-    assert not result.passed
+    assert result.passed is False
+    assert "2" in result.description
+
+
+def test_coord_transform_check_no_version_resolved():
+    ctx = build_asset_context()
+    enriched = {
+        "coord_failures": 0,
+        "version_counter": {},
+        "yaml_sha256": "abc" * 21 + "a",
+        "written_count": 3,
+    }
+    result = coord_transform_check(ctx, enriched_pdv_metadata=enriched)
+    assert result.passed is False
+
+
+def test_coord_transform_check_missing_sha():
+    ctx = build_asset_context()
+    enriched = {
+        "coord_failures": 0,
+        "version_counter": {"HELIX/v2": 3},
+        "yaml_sha256": None,
+        "written_count": 3,
+    }
+    result = coord_transform_check(ctx, enriched_pdv_metadata=enriched)
+    assert result.passed is False
+    assert "sha" in result.description.lower()
