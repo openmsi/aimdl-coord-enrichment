@@ -28,6 +28,11 @@ from helix_dagster.coord_enrichment.inventory import (
     enrichable_items_inventory,
     inventory_nonempty_per_instrument,
 )
+from helix_dagster.coord_enrichment.provenance_tagging import (
+    all_helix_alpss_tagged,
+    maxima_prov_targets_resolve,
+    provenance_tagged_items,
+)
 
 __all__ = [
     "CoordEnrichmentConfig",
@@ -35,4 +40,7 @@ __all__ = [
     "MAXIMA_RAW_PARTITIONS",
     "enrichable_items_inventory",
     "inventory_nonempty_per_instrument",
+    "all_helix_alpss_tagged",
+    "maxima_prov_targets_resolve",
+    "provenance_tagged_items",
 ]

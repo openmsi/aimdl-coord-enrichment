@@ -1,6 +1,6 @@
 """Shared Dagster Config class for the coord_enrichment DAG."""
 
-from __future__ import annotations
+from typing import Optional
 
 from dagster import Config
 
@@ -21,4 +21,4 @@ class CoordEnrichmentConfig(Config):
     """
 
     dry_run: bool = True
-    manifest_tracking_item_id: str | None = None
+    manifest_tracking_item_id: Optional[str] = None
