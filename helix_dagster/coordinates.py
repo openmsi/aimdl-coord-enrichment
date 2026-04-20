@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import datetime
 
 from coordinate_transformer import CoordinateTransformer
 
@@ -19,19 +20,38 @@ except FileNotFoundError:
     _COORD_TRANSFORMER = None
 
 
-def transform_station_to_sample(station_x, station_y, instrument="HELIX"):
+def transform_station_to_sample(
+    station_x,
+    station_y,
+    instrument: str = "HELIX",
+    timestamp: datetime | None = None,
+) -> tuple[float | None, float | None, str | None]:
     """Transform instrument station coordinates to sample-frame coordinates.
 
-    Returns (None, None) if either input is None or if the transformation fails.
+    If ``timestamp`` is provided it must be timezone-aware; it selects the
+    coordinate transform version valid at that instant. When omitted the
+    currently-valid version is used.
+
+    Returns ``(sample_x, sample_y, transform_name)`` where ``transform_name``
+    is the resolved ``InstrumentTransform.name`` (e.g. ``"HELIX/v2"``).
+    Returns ``(None, None, None)`` if inputs are missing, no transformer is
+    configured, or the transform fails.
     """
+    if timestamp is not None and timestamp.tzinfo is None:
+        raise ValueError(
+            f"timestamp must be timezone-aware; got naive datetime {timestamp!r}"
+        )
+
     if station_x is None or station_y is None:
-        return None, None
+        return None, None, None
 
     if _COORD_TRANSFORMER is None:
-        return None, None
+        return None, None, None
 
     try:
-        return _COORD_TRANSFORMER.transform(instrument, station_x, station_y)
+        transform = _COORD_TRANSFORMER.get_transform(instrument, timestamp=timestamp)
+        sample_x, sample_y = transform.transform_point(station_x, station_y)
+        return sample_x, sample_y, transform.name
     except Exception:
         logger.warning(
             "Coordinate transform failed for (%s, %s) on instrument %s",
@@ -40,4 +60,4 @@ def transform_station_to_sample(station_x, station_y, instrument="HELIX"):
             instrument,
             exc_info=True,
         )
-        return None, None
+        return None, None, None

@@ -185,7 +185,9 @@ def enriched_pdv_metadata(
 
         station_x = nan_to_none(row.get("Flyer_X_Position_Final_mm"))
         station_y = nan_to_none(row.get("Flyer_Y_Position_Final_mm"))
-        sample_x, sample_y = transform_station_to_sample(station_x, station_y)
+        sample_x, sample_y, _transform_name = transform_station_to_sample(
+            station_x, station_y
+        )
         # ensure that sample_x,y have only 4 meaningful digits to avoid bogus precision
         if sample_x is not None:
             sample_x = round(sample_x, 4)
