@@ -1,5 +1,6 @@
 """enrichable_items_inventory asset + partition definitions."""
 
+import logging
 from typing import Any
 
 from dagster import (
@@ -19,6 +20,8 @@ from helix_dagster.instruments import (
 )
 from helix_dagster.resources import GirderConnection
 
+logger = logging.getLogger(__name__)
+
 MAXIMA_RAW_PARTITIONS = StaticPartitionsDefinition(
     ["MAXIMA/xrd_raw", "MAXIMA/xrf_raw"]
 )
@@ -26,6 +29,40 @@ MAXIMA_RAW_PARTITIONS = StaticPartitionsDefinition(
 
 def _partition_key(instrument: str, data_type: str) -> str:
     return f"{instrument}/{data_type}"
+
+
+def filter_to_raw_subfolder(
+    items: list[dict[str, Any]], girder: GirderConnection,
+) -> list[dict[str, Any]]:
+    """Keep only items whose immediate Girder folder is named ``raw``.
+
+    Used by the inventory to implement the §7.1 / §7.5 scope gate for
+    ``xrd_derived`` items: root-level TIFFs live outside ``raw/`` and
+    are excluded.  Folder names are batch-fetched (one request per
+    unique ``folderId``) to avoid per-item round trips.
+    """
+    folder_ids = {it.get("folderId") for it in items if it.get("folderId")}
+    name_by_id: dict[str, str] = {}
+    for fid in folder_ids:
+        try:
+            folder = girder.get(f"folder/{fid}")
+            name_by_id[fid] = folder.get("name", "")
+        except Exception as exc:
+            logger.warning(
+                "Could not fetch folder %s while filtering xrd_derived: %s",
+                fid, exc,
+            )
+            name_by_id[fid] = ""
+
+    kept = [it for it in items if name_by_id.get(it.get("folderId")) == "raw"]
+    dropped_count = len(items) - len(kept)
+    if dropped_count:
+        logger.info(
+            "xrd_derived filter: kept %d in-raw items, dropped %d non-raw "
+            "(e.g. root TIFFs)",
+            len(kept), dropped_count,
+        )
+    return kept
 
 
 def _is_in_scope(item: dict) -> bool:
@@ -59,6 +96,8 @@ def enrichable_items_inventory(
     for dt in data_types:
         items = fetch_all_aimdl_datafiles(girder, dt)
         in_scope = [it for it in items if _is_in_scope(it)]
+        if dt == "xrd_derived":
+            in_scope = filter_to_raw_subfolder(in_scope, girder)
         instrument = instrument_for_data_type(dt)
         key = _partition_key(instrument, dt)
         inventory[key] = in_scope

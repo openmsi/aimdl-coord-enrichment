@@ -26,6 +26,7 @@ from helix_dagster.coord_enrichment.config_snapshot import (
 from helix_dagster.coord_enrichment.inventory import (
     MAXIMA_RAW_PARTITIONS,
     enrichable_items_inventory,
+    filter_to_raw_subfolder,
     inventory_nonempty_per_instrument,
 )
 from helix_dagster.coord_enrichment.provenance_tagging import (
@@ -49,6 +50,12 @@ from helix_dagster.coord_enrichment.helix_alpss_leaf import (
     enrichment_success_rate_helix_alpss,
     no_coord_transform_failures_helix_alpss,
 )
+from helix_dagster.coord_enrichment.maxima_derived_leaf import (
+    MAXIMA_DERIVED_PARTITIONS,
+    enriched_maxima_derived,
+    enrichment_success_rate_maxima_derived,
+    no_coord_transform_failures_maxima_derived,
+)
 from helix_dagster.coord_enrichment.overwrite import should_write
 from helix_dagster.coord_enrichment.report import coord_enrichment_report
 from helix_dagster.coord_enrichment.manifest import coord_enrichment_manifest
@@ -58,6 +65,7 @@ __all__ = [
     "coord_transform_config_snapshot",
     "MAXIMA_RAW_PARTITIONS",
     "enrichable_items_inventory",
+    "filter_to_raw_subfolder",
     "inventory_nonempty_per_instrument",
     "all_helix_alpss_tagged",
     "maxima_prov_targets_resolve",
@@ -69,6 +77,10 @@ __all__ = [
     "enriched_helix_alpss",
     "enrichment_success_rate_helix_alpss",
     "no_coord_transform_failures_helix_alpss",
+    "MAXIMA_DERIVED_PARTITIONS",
+    "enriched_maxima_derived",
+    "enrichment_success_rate_maxima_derived",
+    "no_coord_transform_failures_maxima_derived",
     "InheritedCoords",
     "inherit_from_parent",
     "inherited_station_coord_source",
