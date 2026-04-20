@@ -33,6 +33,12 @@ from helix_dagster.coord_enrichment.provenance_tagging import (
     maxima_prov_targets_resolve,
     provenance_tagged_items,
 )
+from helix_dagster.coord_enrichment.enrichment_leaves import (
+    enriched_maxima_raw,
+    enrichment_success_rate_maxima_raw,
+    no_coord_transform_failures_maxima_raw,
+)
+from helix_dagster.coord_enrichment.overwrite import should_write
 
 __all__ = [
     "CoordEnrichmentConfig",
@@ -43,4 +49,8 @@ __all__ = [
     "all_helix_alpss_tagged",
     "maxima_prov_targets_resolve",
     "provenance_tagged_items",
+    "enriched_maxima_raw",
+    "enrichment_success_rate_maxima_raw",
+    "no_coord_transform_failures_maxima_raw",
+    "should_write",
 ]
