@@ -92,6 +92,74 @@ def all_in_scope_data_types() -> frozenset[str]:
     return frozenset(_DATA_TYPE_REGISTRY.keys())
 
 
+# ---------------------------------------------------------------------------
+# Dispatch helpers
+# ---------------------------------------------------------------------------
+
+from helix_dagster.instruments import helix as _helix
+from helix_dagster.instruments import maxima as _maxima
+
+
+def resolve_parent_item_id(item: dict, **context) -> str | None:
+    """Resolve the parent item id for a derived item.
+
+    Dispatch based on the item's data_type:
+      - HELIX ALPSS items → helix.find_parent_pdv_item_id, requires
+        ``pdv_inventory=`` in ``context``.
+      - MAXIMA xrd_derived items → maxima.heal_maxima_derived_parent,
+        requires ``girder=`` in ``context``.
+
+    Returns None if the item's data_type is not in scope, is not a
+    derived type, or no parent can be resolved.
+    """
+    dt = (item.get("meta") or {}).get("data_type")
+    entry = _DATA_TYPE_REGISTRY.get(dt)
+    if entry is None or entry[1] != "derived":
+        return None
+    instrument = entry[0]
+    if instrument == INSTRUMENT_HELIX:
+        inventory = context.get("pdv_inventory")
+        if inventory is None:
+            raise TypeError(
+                "resolve_parent_item_id for HELIX requires pdv_inventory="
+            )
+        return _helix.find_parent_pdv_item_id(item, inventory)
+    if instrument == INSTRUMENT_MAXIMA:
+        girder = context.get("girder")
+        if girder is None:
+            raise TypeError(
+                "resolve_parent_item_id for MAXIMA requires girder="
+            )
+        return _maxima.heal_maxima_derived_parent(item, girder)
+    return None
+
+
+def resolve_leaf(item: dict, **context) -> LeafResolution:
+    """Resolve station coords and timestamp for a leaf item.
+
+    Currently only MAXIMA (xrd_raw, xrf_raw) have leaves in the new
+    DAG's scope. Raises TypeError if called for a non-leaf data_type.
+    Requires ``girder=`` in ``context``.
+    """
+    dt = (item.get("meta") or {}).get("data_type")
+    entry = _DATA_TYPE_REGISTRY.get(dt)
+    if entry is None or entry[1] != "leaf":
+        raise TypeError(
+            f"resolve_leaf called for non-leaf or out-of-scope data_type {dt!r}"
+        )
+    instrument = entry[0]
+    if instrument == INSTRUMENT_MAXIMA:
+        girder = context.get("girder")
+        if girder is None:
+            raise TypeError(
+                "resolve_leaf for MAXIMA requires girder="
+            )
+        return _maxima.resolve_leaf_coords(item, girder)
+    raise TypeError(
+        f"No leaf resolver registered for instrument {instrument!r}"
+    )
+
+
 __all__ = [
     "INSTRUMENT_HELIX",
     "INSTRUMENT_MAXIMA",
@@ -109,4 +177,6 @@ __all__ = [
     "role_for_data_type",
     "is_in_scope",
     "all_in_scope_data_types",
+    "resolve_parent_item_id",
+    "resolve_leaf",
 ]

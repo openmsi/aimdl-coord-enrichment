@@ -452,7 +452,7 @@ Deliverable: this file, merged on `refactor/asset-dag`.
    the Sample_X/Y matches v1 (pre-2026-04-01) for a shot dated
    2026-02-18 and v2 for a shot dated today.
 
-### Phase 2 — `instruments/` adapter module
+### Phase 2 — `instruments/` adapter module ✅ complete
 
 1. Define `Instrument` protocol (`name_in_yaml`, `data_types`,
    `resolve_timestamp`, `resolve_station_coords`).
@@ -463,6 +463,14 @@ Deliverable: this file, merged on `refactor/asset-dag`.
 4. Registry keyed by `data_type` prefix → instrument instance.
 5. Contract tests exercising each adapter against real fixtures copied
    from the test folder.
+
+**Status (landed on `refactor/asset-dag`):** `helix_dagster/instruments/`
+ships a data_type registry, two adapters (HELIX for ALPSS→PDV parent
+discovery; MAXIMA for leaf coord resolution and derived-item prov
+healing), and package-level `resolve_parent_item_id` /
+`resolve_leaf` dispatch helpers. Caching of per-run-folder
+instructions.txt lookups is deliberately deferred to Phase 3's DAG
+asset.
 
 ### Phase 3 — `coord_enrichment` DAG, MAXIMA raw first
 
