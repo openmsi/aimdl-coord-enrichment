@@ -517,7 +517,7 @@ An integration test materializes the full Phase 4 surface
 end-to-end; dry-run default is preserved from Phase 3. Version
 bumped to 0.4.0.
 
-### Phase 5 — overwrite-policy hardening and production roll-out
+### Phase 5 — overwrite-policy hardening and production roll-out ✅ complete
 
 1. Overwrite decision evaluator under unit test, including the decision
    table in §7.2.
@@ -526,6 +526,27 @@ bumped to 0.4.0.
    partition.
 4. Feedback loop: any surprising skips or failures in the first sweep
    get traced and documented before a second run.
+
+**Status (landed on `refactor/asset-dag`):**
+
+- Three partitioned sibling jobs registered:
+  `coord_enrichment_maxima_raw_job`,
+  `coord_enrichment_helix_alpss_job`,
+  `coord_enrichment_maxima_derived_job`.
+- Four schedules in `helix_dagster/schedules.py`, all default
+  STOPPED: one nightly state-report at 03:00 local, three
+  weekly sweeps Sunday 04:00–04:30. Default RunConfig
+  `dry_run=True`.
+- `COORD_ENRICHMENT_MANIFEST_ITEM` env var wired into the
+  manifest asset as a fallback for
+  `CoordEnrichmentConfig.manifest_tracking_item_id`.
+- Operator runbook and one-shot live-sweep script in
+  `docs/runbooks/` and `operations/`.
+- Expected-values document at
+  `docs/runbooks/first_sweep_expected_values.md`.
+
+Version bumped to 0.5.0. The existing
+spreadsheet-driven `process_helix_assets_job` is unchanged.
 
 ---
 
@@ -552,6 +573,9 @@ None are blockers, but flagging for the next conversation:
    the obvious starting point; Kafka-triggered partial sweeps (enrich
    only the items touched in the last hour) are a possible later
    optimization.
+
+   > **Resolved in Phase 5**: schedule. Per-folder sensor is Phase 6
+   > work.
 3. **Error-aggregation granularity.** How much structured context does
    the manifest need about failures — is the aggregated count enough,
    or do we want the full failing-item id list to land in Girder?
@@ -562,6 +586,10 @@ None are blockers, but flagging for the next conversation:
    separable `tag_provenance_job` that the enrichment DAG depends on
    (rather than invokes) is cleaner architecturally. Low priority;
    useful once a second consumer of `prov.wasDerivedFrom` appears.
+
+   > **Deferred**: tagging asset runs in every partitioned job as
+   > an unpartitioned upstream. Extract to its own job only if a
+   > second consumer appears.
 5. **Annotation rule.** `from __future__ import annotations`
    breaks Dagster's Config schema resolution. Rule and
    enforcement test documented at
@@ -569,3 +597,7 @@ None are blockers, but flagging for the next conversation:
    unless a new Dagster-adjacent module appears — that module's
    path should be added to the forbidden list in
    `tests/test_annotations_rule.py`.
+6. **First live sweep date.** No target date yet — operator
+   action pending `COORD_ENRICHMENT_MANIFEST_ITEM` creation on
+   data.htmdec.org and team signoff. See
+   `docs/runbooks/coord_enrichment_production_sweep.md`.

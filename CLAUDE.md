@@ -22,6 +22,21 @@ Any new repo-wide convention worth enforcing should go in that
 directory, be named by the rule it codifies, and be referenced
 from this list.
 
+## Operations
+
+Scheduled and manual sweeps of the coord_enrichment DAG live in:
+
+- `docs/runbooks/coord_enrichment_production_sweep.md` — the
+  operator-facing runbook for live sweeps.
+- `docs/runbooks/first_sweep_expected_values.md` — reference
+  values for what each asset check should report on a sweep
+  against the test collection.
+- `operations/run_live_sweep.sh` — one-shot script invoked by
+  the runbook.
+
+Schedules in `helix_dagster/schedules.py` all ship STOPPED.
+An operator opts in via the Dagster UI.
+
 ## Architecture
 - **Girder** is the data management platform (REST API at data.htmdec.org)
 - **Dagster** orchestrates the metadata extraction pipeline
