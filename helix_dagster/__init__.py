@@ -1,4 +1,4 @@
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 from dagster import AssetSelection, Definitions, EnvVar, define_asset_job
 
@@ -45,6 +45,12 @@ from helix_dagster.coord_enrichment.provenance_tagging import (
     maxima_prov_targets_resolve,
 )
 from helix_dagster.resources import GirderConnection, GirderCredentials
+from helix_dagster.schedules import (
+    coord_enrichment_helix_alpss_weekly_schedule,
+    coord_enrichment_maxima_derived_weekly_schedule,
+    coord_enrichment_maxima_raw_weekly_schedule,
+    coord_enrichment_state_report_schedule,
+)
 from helix_dagster.sensors import helix_folder_sensor
 
 
@@ -57,6 +63,36 @@ coord_enrichment_job = define_asset_job(
         helix_pdv_coverage_observer,
         coord_enrichment_report,
         coord_enrichment_manifest,
+    ),
+)
+
+coord_enrichment_maxima_raw_job = define_asset_job(
+    name="coord_enrichment_maxima_raw_job",
+    selection=AssetSelection.assets(
+        coord_transform_config_snapshot,
+        enrichable_items_inventory,
+        provenance_tagged_items,
+        enriched_maxima_raw,
+    ),
+)
+
+coord_enrichment_helix_alpss_job = define_asset_job(
+    name="coord_enrichment_helix_alpss_job",
+    selection=AssetSelection.assets(
+        coord_transform_config_snapshot,
+        enrichable_items_inventory,
+        provenance_tagged_items,
+        enriched_helix_alpss,
+    ),
+)
+
+coord_enrichment_maxima_derived_job = define_asset_job(
+    name="coord_enrichment_maxima_derived_job",
+    selection=AssetSelection.assets(
+        coord_transform_config_snapshot,
+        enrichable_items_inventory,
+        provenance_tagged_items,
+        enriched_maxima_derived,
     ),
 )
 
@@ -105,7 +141,19 @@ defs = Definitions(
         no_coord_transform_failures_maxima_derived,
         pdv_coverage_above_threshold,
     ],
-    jobs=[process_helix_assets_job, coord_enrichment_job],
+    jobs=[
+        process_helix_assets_job,
+        coord_enrichment_job,
+        coord_enrichment_maxima_raw_job,
+        coord_enrichment_helix_alpss_job,
+        coord_enrichment_maxima_derived_job,
+    ],
+    schedules=[
+        coord_enrichment_state_report_schedule,
+        coord_enrichment_maxima_raw_weekly_schedule,
+        coord_enrichment_helix_alpss_weekly_schedule,
+        coord_enrichment_maxima_derived_weekly_schedule,
+    ],
     sensors=[helix_folder_sensor],
     resources={
         "girder": GirderConnection(

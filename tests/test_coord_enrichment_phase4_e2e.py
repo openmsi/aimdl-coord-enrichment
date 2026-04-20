@@ -336,5 +336,5 @@ def test_phase4_manifest_written(girder_mock):
     assert "write_skipped" not in manifest
     assert "write_failed" not in manifest
     assert manifest["dry_run"] is False
-    assert manifest["pipeline_version"] == "0.4.0"
+    assert manifest["pipeline_version"] == "0.5.0"
     assert manifest["job"] == "coord_enrichment_job"
