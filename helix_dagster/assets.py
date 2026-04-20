@@ -488,5 +488,14 @@ def processing_manifest(
 
 process_helix_assets_job = define_asset_job(
     name="process_helix_assets_job",
-    selection=AssetSelection.all(),
+    selection=AssetSelection.assets(
+        raw_experiment_log,
+        pdv_trace_inventory,
+        validated_rows,
+        pdv_cross_references,
+        enriched_pdv_metadata,
+        alpss_results_inventory,
+        quality_report,
+        processing_manifest,
+    ),
 )

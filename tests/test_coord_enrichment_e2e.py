@@ -234,5 +234,5 @@ def test_e2e_manifest_written(xrd_items, xrf_items, girder_mock):
     assert "write_skipped" not in manifest_result
     assert "write_failed" not in manifest_result
     assert manifest_result["dry_run"] is False
-    assert manifest_result["pipeline_version"] == "0.3.0"
+    assert manifest_result["pipeline_version"] == "0.4.0"
     assert manifest_result["job"] == "coord_enrichment_job"

@@ -493,7 +493,7 @@ MAXIMA/xrd_raw + MAXIMA/xrf_raw), `coord_enrichment_report`, and
 the JHAMAL00018-009 fixture. Dry-run is the default;
 `--live` runs flip `CoordEnrichmentConfig.dry_run=False`.
 
-### Phase 4 — derived inheritance leaves
+### Phase 4 — derived inheritance leaves ✅ complete
 
 1. `enriched_maxima_derived` — in-raw `xrd_derived` only, parent lookup
    via healed `wasDerivedFrom`.
@@ -503,6 +503,19 @@ the JHAMAL00018-009 fixture. Dry-run is the default;
 4. Parent-missing failure path tested explicitly (delete a PDV trace
    item in a test-only fixture, confirm ALPSS partition reports
    unresolved parents without crashing).
+
+**Status (landed on `refactor/asset-dag`):**
+`enriched_helix_alpss` and `enriched_maxima_derived` ship as
+inheritance-based leaves that fetch the parent item, re-apply
+the parent's recorded transform version verbatim (via a new
+`coordinates.transform_with_named_version` helper), and write
+fresh `coord_provenance` with `station_coord_source.kind ==
+"inherited"`. `helix_pdv_coverage_observer` is a read-only
+asset reporting pdv_trace coverage. `coord_enrichment_report`
+now aggregates all three enrichment leaves plus the observer.
+An integration test materializes the full Phase 4 surface
+end-to-end; dry-run default is preserved from Phase 3. Version
+bumped to 0.4.0.
 
 ### Phase 5 — overwrite-policy hardening and production roll-out
 

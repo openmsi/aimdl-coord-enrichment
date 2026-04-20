@@ -1,4 +1,4 @@
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from dagster import AssetSelection, Definitions, EnvVar, define_asset_job
 
@@ -26,10 +26,18 @@ from helix_dagster.coord_enrichment import (
     coord_enrichment_report,
     coord_transform_config_snapshot,
     enrichable_items_inventory,
+    enriched_helix_alpss,
+    enriched_maxima_derived,
     enriched_maxima_raw,
+    enrichment_success_rate_helix_alpss,
+    enrichment_success_rate_maxima_derived,
     enrichment_success_rate_maxima_raw,
+    helix_pdv_coverage_observer,
     inventory_nonempty_per_instrument,
+    no_coord_transform_failures_helix_alpss,
+    no_coord_transform_failures_maxima_derived,
     no_coord_transform_failures_maxima_raw,
+    pdv_coverage_above_threshold,
     provenance_tagged_items,
 )
 from helix_dagster.coord_enrichment.provenance_tagging import (
@@ -46,7 +54,7 @@ coord_enrichment_job = define_asset_job(
         coord_transform_config_snapshot,
         enrichable_items_inventory,
         provenance_tagged_items,
-        enriched_maxima_raw,
+        helix_pdv_coverage_observer,
         coord_enrichment_report,
         coord_enrichment_manifest,
     ),
@@ -64,13 +72,17 @@ defs = Definitions(
         alpss_results_inventory,
         quality_report,
         processing_manifest,
-        # coord_enrichment
+        # coord_enrichment (Phase 3)
         coord_transform_config_snapshot,
         enrichable_items_inventory,
         provenance_tagged_items,
         enriched_maxima_raw,
         coord_enrichment_report,
         coord_enrichment_manifest,
+        # coord_enrichment (Phase 4)
+        enriched_helix_alpss,
+        enriched_maxima_derived,
+        helix_pdv_coverage_observer,
     ],
     asset_checks=[
         # existing
@@ -80,12 +92,18 @@ defs = Definitions(
         igsn_consistency,
         enrichment_success_rate,
         coord_transform_check,
-        # coord_enrichment
+        # coord_enrichment (Phase 3)
         inventory_nonempty_per_instrument,
         all_helix_alpss_tagged,
         maxima_prov_targets_resolve,
         enrichment_success_rate_maxima_raw,
         no_coord_transform_failures_maxima_raw,
+        # coord_enrichment (Phase 4)
+        enrichment_success_rate_helix_alpss,
+        no_coord_transform_failures_helix_alpss,
+        enrichment_success_rate_maxima_derived,
+        no_coord_transform_failures_maxima_derived,
+        pdv_coverage_above_threshold,
     ],
     jobs=[process_helix_assets_job, coord_enrichment_job],
     sensors=[helix_folder_sensor],
