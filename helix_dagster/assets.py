@@ -13,9 +13,14 @@ from dagster import (
 
 from helix_dagster import __version__ as PIPELINE_VERSION
 from helix_dagster.constants import ALPSS_RESULT_DATA_TYPE, COLUMN_MAP, PDV_TRACE_DATA_TYPE
-from helix_dagster.coordinates import transform_station_to_sample
+from helix_dagster.coordinates import _COORD_YAML, transform_station_to_sample
 from helix_dagster.girder_io import download_and_read, fetch_all_aimdl_datafiles, nan_to_none
 from helix_dagster.matching import match_pdv_file
+from helix_dagster.provenance import (
+    build_coord_provenance,
+    compute_yaml_sha256,
+    get_transformer_version,
+)
 from helix_dagster.resources import GirderConnection
 from helix_dagster.validation import NpEncoder, validate_igsn
 
@@ -163,6 +168,7 @@ def pdv_cross_references(
 @asset
 def enriched_pdv_metadata(
     context: AssetExecutionContext,
+    config: ExperimentLogConfig,
     pdv_cross_references: dict,
     validated_rows: dict,
     girder: GirderConnection,
@@ -170,11 +176,47 @@ def enriched_pdv_metadata(
     """Write coordinate and flyer position metadata to matched Girder PDV items.
 
     For each matched PDV item, writes: Flyer_Row, Flyer_Column,
-    Station_X, Station_Y (instrument coordinates), and Sample_X,
-    Sample_Y (transformed sample-frame coordinates).
+    Station_X, Station_Y (instrument coordinates), Sample_X, Sample_Y
+    (transformed sample-frame coordinates), and a coord_provenance
+    block describing the transform version, YAML digest, shot
+    timestamp, and source spreadsheet row used.
     """
     df = validated_rows["dataframe"]
     matches = pdv_cross_references["matches"]
+
+    try:
+        yaml_sha256 = compute_yaml_sha256(_COORD_YAML)
+    except FileNotFoundError:
+        context.log.error(
+            "Coordinate transforms YAML not found at %s; "
+            "coord_provenance.transform_yaml_sha256 will be null.",
+            _COORD_YAML,
+        )
+        yaml_sha256 = None
+    transformer_version = get_transformer_version()
+    naive_timestamps_count = 0
+    version_counter: dict[str, int] = {}
+
+    try:
+        run_id = context.run.run_id
+    except Exception:
+        run_id = None
+
+    def _parse_row_timestamp(raw):
+        """Return (tz-aware datetime or None, was_naive: bool, origin: str)."""
+        if raw is None:
+            return None, False, "missing"
+        try:
+            ts = pd.to_datetime(raw)
+        except (ValueError, TypeError):
+            return None, False, "unparseable"
+        if pd.isna(ts):
+            return None, False, "missing"
+        py_ts = ts.to_pydatetime()
+        if py_ts.tzinfo is None:
+            py_ts = py_ts.replace(tzinfo=timezone.utc)
+            return py_ts, True, "spreadsheet_timestamp_col_assumed_utc"
+        return py_ts, False, "spreadsheet_timestamp_col"
 
     written_count = 0
     write_errors = []
@@ -185,9 +227,14 @@ def enriched_pdv_metadata(
 
         station_x = nan_to_none(row.get("Flyer_X_Position_Final_mm"))
         station_y = nan_to_none(row.get("Flyer_Y_Position_Final_mm"))
-        sample_x, sample_y, _transform_name = transform_station_to_sample(
-            station_x, station_y
+        shot_ts, was_naive, ts_origin = _parse_row_timestamp(row.get("Timestamp"))
+        if was_naive:
+            naive_timestamps_count += 1
+        sample_x, sample_y, transform_name = transform_station_to_sample(
+            station_x, station_y, timestamp=shot_ts
         )
+        if transform_name is not None:
+            version_counter[transform_name] = version_counter.get(transform_name, 0) + 1
         # ensure that sample_x,y have only 4 meaningful digits to avoid bogus precision
         if sample_x is not None:
             sample_x = round(sample_x, 4)
@@ -197,6 +244,23 @@ def enriched_pdv_metadata(
         if station_x is not None and station_y is not None and sample_x is None:
             coord_failures += 1
 
+        coord_prov = build_coord_provenance(
+            instrument="HELIX",
+            transform_version=transform_name,
+            transform_yaml_sha256=yaml_sha256 or "",
+            transformer_version=transformer_version,
+            pipeline_version=PIPELINE_VERSION,
+            source_timestamp=shot_ts,
+            source_timestamp_origin=ts_origin,
+            station_coord_source={
+                "kind": "helix_experiment_log",
+                "spreadsheet_item_id": config.item_id,
+                "spreadsheet_row_index": int(row_idx),
+                "spreadsheet_pdv_filename": row.get("PDV_FileName"),
+            },
+            dagster_run_id=run_id,
+        )
+
         metadata = {
             "Flyer_Row": nan_to_none(row.get("Flyer_Row")),
             "Flyer_Column": nan_to_none(row.get("Flyer_Column")),
@@ -204,6 +268,7 @@ def enriched_pdv_metadata(
             "Station_Y": station_y,
             "Sample_X": sample_x,
             "Sample_Y": sample_y,
+            "coord_provenance": coord_prov,
         }
         # Ensure all values are JSON-serializable
         metadata = json.loads(json.dumps(metadata, cls=NpEncoder))
@@ -217,16 +282,32 @@ def enriched_pdv_metadata(
             )
             write_errors.append({"row": row_idx, "error": str(exc)})
 
+    if naive_timestamps_count > 0:
+        context.log.warning(
+            "Spreadsheet contained %d naive Timestamp values; "
+            "interpreted as UTC. Set an explicit timezone in the "
+            "station export to remove this ambiguity.",
+            naive_timestamps_count,
+        )
+
     context.add_output_metadata(
         {
             "items_enriched": MetadataValue.int(written_count),
             "coordinate_transform_failures": MetadataValue.int(coord_failures),
+            "naive_timestamps": MetadataValue.int(naive_timestamps_count),
+            "transform_versions_used": MetadataValue.text(
+                ", ".join(f"{k}={v}" for k, v in sorted(version_counter.items()))
+                or "none"
+            ),
         }
     )
     return {
         "written_count": written_count,
         "write_errors": write_errors,
         "coord_failures": coord_failures,
+        "version_counter": version_counter,
+        "naive_timestamps_count": naive_timestamps_count,
+        "yaml_sha256": yaml_sha256,
     }
 
 

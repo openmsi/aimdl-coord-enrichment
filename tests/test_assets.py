@@ -1,12 +1,17 @@
 """Integration tests for the Dagster asset-based pipeline."""
 
+from datetime import datetime, timezone
+from unittest.mock import MagicMock
+
 import pandas as pd
+import pytest
 from dagster import build_asset_context
 
 from helix_dagster.assets import (
     validated_rows as validated_rows_fn,
     pdv_cross_references as pdv_cross_references_fn,
 )
+from helix_dagster.coordinates import _COORD_TRANSFORMER
 
 
 def test_validated_rows_pure():
@@ -247,3 +252,64 @@ def test_processing_manifest_with_warnings():
     assert result["status"] == "completed_with_warnings"
     assert result["issues_summary"]["igsn_invalid"] == 1
     assert result["issues_summary"]["pdv_not_found"] == 1
+
+
+def test_enriched_pdv_metadata_writes_provenance():
+    """Verify enriched_pdv_metadata writes coord_provenance alongside coords."""
+    if _COORD_TRANSFORMER is None:
+        pytest.skip("CoordinateTransformer unavailable (YAML missing)")
+
+    from helix_dagster.assets import (
+        enriched_pdv_metadata as enrich_fn,
+        ExperimentLogConfig,
+    )
+
+    df = pd.DataFrame([
+        {
+            "Timestamp": datetime(2026, 4, 1, 12, 0, 0, tzinfo=timezone.utc),
+            "Sample_IGSN": "ABCDEF12345",
+            "valid_igsn": "ABCDEF12345",
+            "PDV_FileName": "shot001",
+            "Flyer_Row": 1,
+            "Flyer_Column": 2,
+            "Flyer_X_Position_Final_mm": 10.5,
+            "Flyer_Y_Position_Final_mm": 20.3,
+        },
+    ])
+    validated = {"dataframe": df, "igsn_issues": []}
+    xrefs = {
+        "matches": {
+            0: {"_id": "pdvitem1", "name": "shot001_ch1.tdms",
+                "meta": {"igsn": "ABCDEF12345", "data_type": "pdv_trace"}},
+        },
+        "pdv_issues": [],
+    }
+    config = ExperimentLogConfig(item_id="src_spreadsheet_id", filename="test.csv")
+    mock_girder = MagicMock()
+
+    ctx = build_asset_context()
+    result = enrich_fn(
+        context=ctx,
+        config=config,
+        pdv_cross_references=xrefs,
+        validated_rows=validated,
+        girder=mock_girder,
+    )
+
+    mock_girder.addMetadataToItem.assert_called_once()
+    call_args = mock_girder.addMetadataToItem.call_args
+    item_id_arg, payload = call_args[0]
+    assert item_id_arg == "pdvitem1"
+    assert "Station_X" in payload
+    assert "Sample_X" in payload
+    assert "coord_provenance" in payload
+    prov = payload["coord_provenance"]
+    assert prov["instrument"] == "HELIX"
+    assert prov["transform_version"] is not None
+    assert prov["station_coord_source"]["kind"] == "helix_experiment_log"
+    assert prov["station_coord_source"]["spreadsheet_item_id"] == "src_spreadsheet_id"
+    assert prov["station_coord_source"]["spreadsheet_row_index"] == 0
+
+    assert result["naive_timestamps_count"] == 0
+    assert result["written_count"] == 1
+    assert result["version_counter"]
