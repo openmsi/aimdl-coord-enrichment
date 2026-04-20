@@ -535,7 +535,7 @@ Existing variables are unchanged. New:
 
 | Variable | Description | Required |
 |---|---|---|
-| `AIMDL_COORD_DAG_MANIFEST_ITEM` | Girder item id that receives `coord_enrichment_status` writes from the manifest asset | Yes |
+| `COORD_ENRICHMENT_MANIFEST_ITEM` | Girder item id that receives `meta.coord_enrichment_status` when the manifest asset runs. Read as a fallback when `CoordEnrichmentConfig.manifest_tracking_item_id` is not set. | No (but required for production scheduling) |
 | `COORD_ENRICHMENT_DRY_RUN` | If set truthy, all enrichment leaves log what they would write and skip the actual Girder PUT | No |
 
 ---

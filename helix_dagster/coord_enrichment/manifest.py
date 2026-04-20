@@ -1,5 +1,6 @@
 """coord_enrichment_manifest asset."""
 
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -41,6 +42,12 @@ def coord_enrichment_manifest(
 
     item_id = config.manifest_tracking_item_id
     if item_id is None:
+        item_id = os.environ.get("COORD_ENRICHMENT_MANIFEST_ITEM") or None
+    tracking_item_source = (
+        "config" if config.manifest_tracking_item_id is not None
+        else ("env" if item_id is not None else "unset")
+    )
+    if item_id is None:
         context.log.warning(
             "manifest_tracking_item_id not configured; skipping Girder write. "
             "Set CoordEnrichmentConfig.manifest_tracking_item_id to enable."
@@ -67,6 +74,7 @@ def coord_enrichment_manifest(
     context.add_output_metadata(
         {
             "tracking_item_id": MetadataValue.text(item_id or "<unset>"),
+            "tracking_item_source": MetadataValue.text(tracking_item_source),
             "dry_run": MetadataValue.bool(config.dry_run),
             "written": MetadataValue.bool(
                 item_id is not None
