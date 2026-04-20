@@ -22,8 +22,6 @@ in the leaf_data_types set for HELIX here — it is listed as an
 "external" data type that other data types inherit from.
 """
 
-from __future__ import annotations
-
 from helix_dagster.instruments.types import (
     InstrumentName,
     ItemRole,

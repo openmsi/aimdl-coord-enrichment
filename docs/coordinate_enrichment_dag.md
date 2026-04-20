@@ -540,3 +540,10 @@ None are blockers, but flagging for the next conversation:
    separable `tag_provenance_job` that the enrichment DAG depends on
    (rather than invokes) is cleaner architecturally. Low priority;
    useful once a second consumer of `prov.wasDerivedFrom` appears.
+5. **Annotation rule.** `from __future__ import annotations`
+   breaks Dagster's Config schema resolution. Rule and
+   enforcement test documented at
+   `docs/developer_notes/annotations.md`. No action required
+   unless a new Dagster-adjacent module appears — that module's
+   path should be added to the forbidden list in
+   `tests/test_annotations_rule.py`.

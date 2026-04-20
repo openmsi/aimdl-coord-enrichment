@@ -8,6 +8,20 @@ It extracts metadata, validates sample identifiers (IGSNs), cross-references PDV
 instrument coordinates into sample-frame coordinates, and writes enriched metadata
 back to Girder items.
 
+## Project conventions
+
+Short-form rules that bind both human and agentic contributors
+live under `docs/developer_notes/`. The current set:
+
+- `docs/developer_notes/annotations.md` — **do not** use
+  `from __future__ import annotations` in Dagster-adjacent
+  modules (assets, sensors, resources, `Config` subclasses, or
+  the Definitions registry). A CI test enforces this.
+
+Any new repo-wide convention worth enforcing should go in that
+directory, be named by the rule it codifies, and be referenced
+from this list.
+
 ## Architecture
 - **Girder** is the data management platform (REST API at data.htmdec.org)
 - **Dagster** orchestrates the metadata extraction pipeline
