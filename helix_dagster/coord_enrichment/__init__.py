@@ -39,6 +39,8 @@ from helix_dagster.coord_enrichment.enrichment_leaves import (
     no_coord_transform_failures_maxima_raw,
 )
 from helix_dagster.coord_enrichment.overwrite import should_write
+from helix_dagster.coord_enrichment.report import coord_enrichment_report
+from helix_dagster.coord_enrichment.manifest import coord_enrichment_manifest
 
 __all__ = [
     "CoordEnrichmentConfig",
@@ -53,4 +55,6 @@ __all__ = [
     "enrichment_success_rate_maxima_raw",
     "no_coord_transform_failures_maxima_raw",
     "should_write",
+    "coord_enrichment_report",
+    "coord_enrichment_manifest",
 ]

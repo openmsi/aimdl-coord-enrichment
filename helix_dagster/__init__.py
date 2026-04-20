@@ -1,6 +1,6 @@
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
-from dagster import Definitions, EnvVar
+from dagster import AssetSelection, Definitions, EnvVar, define_asset_job
 
 from helix_dagster.assets import (
     alpss_results_inventory,
@@ -21,11 +21,41 @@ from helix_dagster.checks import (
     pdv_match_rate,
     zero_inventory,
 )
+from helix_dagster.coord_enrichment import (
+    coord_enrichment_manifest,
+    coord_enrichment_report,
+    coord_transform_config_snapshot,
+    enrichable_items_inventory,
+    enriched_maxima_raw,
+    enrichment_success_rate_maxima_raw,
+    inventory_nonempty_per_instrument,
+    no_coord_transform_failures_maxima_raw,
+    provenance_tagged_items,
+)
+from helix_dagster.coord_enrichment.provenance_tagging import (
+    all_helix_alpss_tagged,
+    maxima_prov_targets_resolve,
+)
 from helix_dagster.resources import GirderConnection, GirderCredentials
 from helix_dagster.sensors import helix_folder_sensor
 
+
+coord_enrichment_job = define_asset_job(
+    name="coord_enrichment_job",
+    selection=AssetSelection.assets(
+        coord_transform_config_snapshot,
+        enrichable_items_inventory,
+        provenance_tagged_items,
+        enriched_maxima_raw,
+        coord_enrichment_report,
+        coord_enrichment_manifest,
+    ),
+)
+
+
 defs = Definitions(
     assets=[
+        # existing
         raw_experiment_log,
         pdv_trace_inventory,
         validated_rows,
@@ -34,16 +64,30 @@ defs = Definitions(
         alpss_results_inventory,
         quality_report,
         processing_manifest,
+        # coord_enrichment
+        coord_transform_config_snapshot,
+        enrichable_items_inventory,
+        provenance_tagged_items,
+        enriched_maxima_raw,
+        coord_enrichment_report,
+        coord_enrichment_manifest,
     ],
     asset_checks=[
+        # existing
         zero_inventory,
         igsn_validity_rate,
         pdv_match_rate,
         igsn_consistency,
         enrichment_success_rate,
         coord_transform_check,
+        # coord_enrichment
+        inventory_nonempty_per_instrument,
+        all_helix_alpss_tagged,
+        maxima_prov_targets_resolve,
+        enrichment_success_rate_maxima_raw,
+        no_coord_transform_failures_maxima_raw,
     ],
-    jobs=[process_helix_assets_job],
+    jobs=[process_helix_assets_job, coord_enrichment_job],
     sensors=[helix_folder_sensor],
     resources={
         "girder": GirderConnection(

@@ -472,7 +472,7 @@ healing), and package-level `resolve_parent_item_id` /
 instructions.txt lookups is deliberately deferred to Phase 3's DAG
 asset.
 
-### Phase 3 — `coord_enrichment` DAG, MAXIMA raw first
+### Phase 3 — `coord_enrichment` DAG, MAXIMA raw first ✅ complete
 
 1. `provenance_tagged_items` asset — HELIX ALPSS tagging and MAXIMA
    prov-heal only. No coordinate writes.
@@ -483,6 +483,15 @@ asset.
 6. Integration test against `JHAMAL00018-009_…_16-56-16` (25 scan
    points): expect 50 writes (25 xrd_raw + 25 xrf_raw) and provenance
    round-tripping.
+
+**Status (landed on `refactor/asset-dag`):** Six assets shipped —
+`coord_transform_config_snapshot`, `enrichable_items_inventory`,
+`provenance_tagged_items`, `enriched_maxima_raw` (partitioned
+MAXIMA/xrd_raw + MAXIMA/xrf_raw), `coord_enrichment_report`, and
+`coord_enrichment_manifest`. `coord_enrichment_job` is wired into
+`defs`. End-to-end integration test materializes 50 writes against
+the JHAMAL00018-009 fixture. Dry-run is the default;
+`--live` runs flip `CoordEnrichmentConfig.dry_run=False`.
 
 ### Phase 4 — derived inheritance leaves
 
