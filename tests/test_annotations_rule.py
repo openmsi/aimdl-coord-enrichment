@@ -32,6 +32,7 @@ FORBIDDEN_PATHS = [
     "helix_dagster/coord_enrichment/enrichment_leaves.py",
     "helix_dagster/coord_enrichment/report.py",
     "helix_dagster/coord_enrichment/manifest.py",
+    "helix_dagster/coord_enrichment/inheritance.py",
 ]
 
 FORBIDDEN_IMPORT = "from __future__ import annotations"
