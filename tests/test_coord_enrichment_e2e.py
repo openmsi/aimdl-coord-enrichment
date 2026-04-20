@@ -23,6 +23,7 @@ from helix_dagster.coord_enrichment.config_snapshot import (
 from helix_dagster.coord_enrichment.enrichment_leaves import enriched_maxima_raw
 from helix_dagster.coord_enrichment.inventory import enrichable_items_inventory
 from helix_dagster.coord_enrichment.manifest import coord_enrichment_manifest
+from helix_dagster.coord_enrichment.pdv_observer import helix_pdv_coverage_observer
 from helix_dagster.coord_enrichment.provenance_tagging import provenance_tagged_items
 from helix_dagster.coord_enrichment.report import coord_enrichment_report
 
@@ -138,9 +139,21 @@ def _run_full_dag(xrd_items, xrf_items, girder_mock):
                 ctx, config_live, inventory, snap, girder_mock,
             )
 
+    observer_ctx = build_asset_context()
+    with patch(
+        "helix_dagster.coord_enrichment.pdv_observer.fetch_all_aimdl_datafiles",
+        return_value=[],
+    ):
+        observer_result = helix_pdv_coverage_observer(observer_ctx, girder_mock)
+
     report_ctx = build_asset_context()
     xrd_report = coord_enrichment_report(
-        report_ctx, partition_results["MAXIMA/xrd_raw"], tagging_result,
+        report_ctx,
+        partition_results["MAXIMA/xrd_raw"],
+        {},  # enriched_helix_alpss — not exercised in this e2e
+        {},  # enriched_maxima_derived — not exercised in this e2e
+        tagging_result,
+        observer_result,
     )
 
     manifest_ctx = build_asset_context()

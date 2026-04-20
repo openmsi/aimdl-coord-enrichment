@@ -9,54 +9,80 @@ from dagster import AssetExecutionContext, MetadataValue, asset
 def coord_enrichment_report(
     context: AssetExecutionContext,
     enriched_maxima_raw: dict[str, Any],
+    enriched_helix_alpss: dict[str, Any],
+    enriched_maxima_derived: dict[str, Any],
     provenance_tagged_items: dict[str, Any],
+    helix_pdv_coverage_observer: dict[str, Any],
 ) -> dict[str, Any]:
-    """Aggregate counts across the Phase 3 enrichment surface.
+    """Aggregate counts across all enrichment leaves and the PDV observer."""
+    leaves_by_partition: dict[str, dict[str, Any]] = {}
 
-    In Phase 3 only one enrichment leaf exists (enriched_maxima_raw,
-    split across two partitions). Phase 4 will add HELIX ALPSS and
-    MAXIMA derived leaves and this asset will aggregate across all
-    of them.
+    def _flatten_leaf(leaf):
+        if leaf is None:
+            return
+        pk = leaf.get("partition_key")
+        if pk is None:
+            return
+        leaves_by_partition[pk] = {
+            "counts": leaf.get("counts", {}),
+            "write_errors": leaf.get("write_errors", []),
+            "resolution_errors": leaf.get("resolution_errors", []),
+            "version_counter": leaf.get("version_counter", {}),
+            "dry_run": leaf.get("dry_run", None),
+        }
 
-    The asset's runtime behavior: it receives the two upstream
-    dicts and flattens them into a single structured report. It
-    writes nothing to Girder.
-    """
-    leaf = enriched_maxima_raw
-    tagging = provenance_tagged_items
+    _flatten_leaf(enriched_maxima_raw)
+    _flatten_leaf(enriched_helix_alpss)
+    _flatten_leaf(enriched_maxima_derived)
+
+    agg = {
+        "seen": 0,
+        "written": 0,
+        "simulated_dry_run": 0,
+        "skipped_no_change": 0,
+        "resolution_errors": 0,
+        "coord_failures": 0,
+    }
+    for leaf in leaves_by_partition.values():
+        counts = leaf["counts"]
+        for k in agg:
+            agg[k] += counts.get(k, 0)
 
     report = {
-        "leaves": {
-            leaf["partition_key"]: {
-                "counts": leaf["counts"],
-                "write_errors": leaf["write_errors"],
-                "resolution_errors": leaf["resolution_errors"],
-                "version_counter": leaf["version_counter"],
-                "dry_run": leaf["dry_run"],
-            }
-        },
+        "leaves": leaves_by_partition,
         "tagging": {
-            "counters": tagging["counters"],
-            "unresolved_count": len(tagging["unresolved"]),
-            "write_ops_count": len(tagging["write_ops"]),
-            "dry_run": tagging["dry_run"],
+            "counters": provenance_tagged_items["counters"],
+            "unresolved_count": len(provenance_tagged_items["unresolved"]),
+            "write_ops_count": len(provenance_tagged_items["write_ops"]),
+            "dry_run": provenance_tagged_items["dry_run"],
+        },
+        "coverage": {
+            "pdv_trace": helix_pdv_coverage_observer,
         },
         "summary": {
-            "total_items_seen": leaf["counts"]["seen"],
-            "total_writes": leaf["counts"]["written"],
-            "total_simulated": leaf["counts"]["simulated_dry_run"],
-            "total_skipped_no_change": leaf["counts"]["skipped_no_change"],
-            "total_resolution_errors": leaf["counts"]["resolution_errors"],
-            "total_coord_failures": leaf["counts"]["coord_failures"],
+            "total_items_seen": agg["seen"],
+            "total_writes": agg["written"],
+            "total_simulated": agg["simulated_dry_run"],
+            "total_skipped_no_change": agg["skipped_no_change"],
+            "total_resolution_errors": agg["resolution_errors"],
+            "total_coord_failures": agg["coord_failures"],
+            "leaf_partitions_covered": len(leaves_by_partition),
         },
     }
-    context.add_output_metadata(
-        {
-            "total_writes": MetadataValue.int(report["summary"]["total_writes"]),
-            "total_simulated": MetadataValue.int(report["summary"]["total_simulated"]),
-            "dry_run_aggregate": MetadataValue.bool(
-                bool(leaf["dry_run"]) or bool(tagging["dry_run"])
-            ),
-        }
-    )
+
+    context.add_output_metadata({
+        "total_writes": MetadataValue.int(agg["written"]),
+        "total_simulated": MetadataValue.int(agg["simulated_dry_run"]),
+        "leaf_partitions": MetadataValue.int(len(leaves_by_partition)),
+        "pdv_fully_enriched": MetadataValue.int(
+            helix_pdv_coverage_observer["fully_enriched"]
+        ),
+        "pdv_coverage_rate": MetadataValue.float(
+            round(helix_pdv_coverage_observer["coverage_rate"], 3)
+        ),
+        "dry_run_aggregate": MetadataValue.bool(
+            any(leaf["dry_run"] for leaf in leaves_by_partition.values())
+            or bool(provenance_tagged_items["dry_run"])
+        ),
+    })
     return report

@@ -15,6 +15,7 @@ Module layout (populated across Phase 3 steps):
   enrichment_leaves.py   — enriched_maxima_raw asset + checks
   overwrite.py           — pure overwrite-policy evaluator
   cache.py               — per-run-folder cache helpers
+  pdv_observer.py        — helix_pdv_coverage_observer asset + check
   report.py              — coord_enrichment_report asset
   manifest.py            — coord_enrichment_manifest asset
 """
@@ -56,6 +57,10 @@ from helix_dagster.coord_enrichment.maxima_derived_leaf import (
     enrichment_success_rate_maxima_derived,
     no_coord_transform_failures_maxima_derived,
 )
+from helix_dagster.coord_enrichment.pdv_observer import (
+    helix_pdv_coverage_observer,
+    pdv_coverage_above_threshold,
+)
 from helix_dagster.coord_enrichment.overwrite import should_write
 from helix_dagster.coord_enrichment.report import coord_enrichment_report
 from helix_dagster.coord_enrichment.manifest import coord_enrichment_manifest
@@ -84,6 +89,8 @@ __all__ = [
     "InheritedCoords",
     "inherit_from_parent",
     "inherited_station_coord_source",
+    "helix_pdv_coverage_observer",
+    "pdv_coverage_above_threshold",
     "should_write",
     "coord_enrichment_report",
     "coord_enrichment_manifest",

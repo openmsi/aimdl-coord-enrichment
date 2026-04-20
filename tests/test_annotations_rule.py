@@ -35,6 +35,7 @@ FORBIDDEN_PATHS = [
     "helix_dagster/coord_enrichment/inheritance.py",
     "helix_dagster/coord_enrichment/helix_alpss_leaf.py",
     "helix_dagster/coord_enrichment/maxima_derived_leaf.py",
+    "helix_dagster/coord_enrichment/pdv_observer.py",
 ]
 
 FORBIDDEN_IMPORT = "from __future__ import annotations"
