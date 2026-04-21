@@ -31,11 +31,16 @@ def coord_enrichment_manifest(
     except Exception:
         run_id = "direct-invocation"
 
+    try:
+        job_name = context.job_name
+    except Exception:
+        job_name = "unknown"
+
     manifest = {
         "last_processed": datetime.now(timezone.utc).isoformat(),
         "dagster_run_id": run_id,
         "pipeline_version": PIPELINE_VERSION,
-        "job": "coord_enrichment_job",
+        "job": job_name,
         "dry_run": config.dry_run,
         "report": coord_enrichment_report,
     }

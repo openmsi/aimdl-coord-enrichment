@@ -235,4 +235,4 @@ def test_e2e_manifest_written(xrd_items, xrf_items, girder_mock):
     assert "write_failed" not in manifest_result
     assert manifest_result["dry_run"] is False
     assert manifest_result["pipeline_version"] == "0.5.0"
-    assert manifest_result["job"] == "coord_enrichment_job"
+    assert manifest_result["job"] == "unknown"  # direct invocation, no job context
