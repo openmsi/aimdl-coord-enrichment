@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "helix_dagster"
-version = "0.2.0"
+version = "0.5.0"
 description = "Dagster pipeline for HELIX experiment metadata extraction and enrichment"
 dependencies = [
     "dagster",
