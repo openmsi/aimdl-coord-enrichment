@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "dagster[test]"]
+dev = ["pytest"]
 
 [tool.setuptools.packages.find]
 include = ["helix_dagster*"]
