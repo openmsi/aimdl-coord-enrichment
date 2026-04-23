@@ -8,6 +8,7 @@ from dagster import build_asset_context
 
 from helix_dagster.coord_enrichment.inventory import (
     MAXIMA_RAW_PARTITIONS,
+    PARTITION_AWARE_DATA_TYPES,
     _is_in_scope,
     enrichable_items_inventory,
     filter_to_raw_subfolder,
@@ -27,9 +28,11 @@ def _make_item(data_type, igsn=None, **extra_meta):
 # ── enrichable_items_inventory ──────────────────────────────────────
 
 
+@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
 @patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
-def test_inventory_returns_all_in_scope_data_type_keys(mock_fetch):
-    mock_fetch.return_value = []
+def test_inventory_returns_all_in_scope_data_type_keys(mock_datafiles, mock_partition):
+    mock_datafiles.return_value = []
+    mock_partition.return_value = []
     girder = MagicMock()
     ctx = build_asset_context()
 
@@ -44,9 +47,10 @@ def test_inventory_returns_all_in_scope_data_type_keys(mock_fetch):
         assert v == []
 
 
+@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
 @patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
-def test_inventory_filters_out_missing_igsn(mock_fetch):
-    def side_effect(_client, dt):
+def test_inventory_filters_out_missing_igsn(mock_datafiles, mock_partition):
+    def partition_side_effect(_client, dt):
         if dt == "xrd_raw":
             return [
                 _make_item("xrd_raw", igsn="JHAMAB00001"),
@@ -54,7 +58,8 @@ def test_inventory_filters_out_missing_igsn(mock_fetch):
             ]
         return []
 
-    mock_fetch.side_effect = side_effect
+    mock_partition.side_effect = partition_side_effect
+    mock_datafiles.return_value = []
     girder = MagicMock()
     ctx = build_asset_context()
 
@@ -63,14 +68,16 @@ def test_inventory_filters_out_missing_igsn(mock_fetch):
     assert len(result["MAXIMA/xrd_raw"]) == 1
 
 
+@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
 @patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
-def test_inventory_keeps_items_with_igsn(mock_fetch):
-    def side_effect(_client, dt):
+def test_inventory_keeps_items_with_igsn(mock_datafiles, mock_partition):
+    def partition_side_effect(_client, dt):
         if dt == "xrf_raw":
             return [_make_item("xrf_raw", igsn="JHAMAB00002")]
         return []
 
-    mock_fetch.side_effect = side_effect
+    mock_partition.side_effect = partition_side_effect
+    mock_datafiles.return_value = []
     girder = MagicMock()
     ctx = build_asset_context()
 
@@ -80,9 +87,13 @@ def test_inventory_keeps_items_with_igsn(mock_fetch):
     assert result["MAXIMA/xrf_raw"][0]["meta"]["igsn"] == "JHAMAB00002"
 
 
+@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
 @patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
-def test_inventory_key_format_is_instrument_slash_data_type(mock_fetch):
-    mock_fetch.return_value = []
+def test_inventory_key_format_is_instrument_slash_data_type(
+    mock_datafiles, mock_partition,
+):
+    mock_datafiles.return_value = []
+    mock_partition.return_value = []
     girder = MagicMock()
     ctx = build_asset_context()
 
@@ -96,9 +107,13 @@ def test_inventory_key_format_is_instrument_slash_data_type(mock_fetch):
         assert dt in all_in_scope_data_types()
 
 
+@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
 @patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
-def test_inventory_logs_per_data_type_counts(mock_fetch, capsys):
-    mock_fetch.return_value = []
+def test_inventory_logs_per_data_type_counts(
+    mock_datafiles, mock_partition, capsys,
+):
+    mock_datafiles.return_value = []
+    mock_partition.return_value = []
     girder = MagicMock()
     ctx = build_asset_context()
 
@@ -108,6 +123,75 @@ def test_inventory_logs_per_data_type_counts(mock_fetch, capsys):
     # that logging doesn't error is the primary check here.
     # TODO: assert log output contains data_type names once Dagster
     # test log capture is wired up.
+
+
+@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
+@patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
+def test_inventory_uses_partition_api_for_maxima_types(
+    mock_datafiles, mock_partition,
+):
+    """MAXIMA partition-aware types must route through the partition API."""
+    mock_datafiles.return_value = []
+    mock_partition.return_value = []
+    girder = MagicMock()
+    ctx = build_asset_context()
+
+    enrichable_items_inventory(ctx, girder)
+
+    partition_dts = {call.args[1] for call in mock_partition.call_args_list}
+    # The inventory only fetches in-scope types; xrd_metadata is
+    # partition-aware but out-of-scope, so it's not fetched.
+    expected = PARTITION_AWARE_DATA_TYPES & all_in_scope_data_types()
+    assert partition_dts == expected
+    # Those same types must NOT have been fetched via /aimdl/datafiles.
+    datafiles_dts = {call.args[1] for call in mock_datafiles.call_args_list}
+    assert datafiles_dts.isdisjoint(PARTITION_AWARE_DATA_TYPES)
+
+
+@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
+@patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
+def test_inventory_uses_datafiles_for_helix(mock_datafiles, mock_partition):
+    """HELIX data types (pdv_alpss_*) still use /aimdl/datafiles."""
+    mock_datafiles.return_value = []
+    mock_partition.return_value = []
+    girder = MagicMock()
+    ctx = build_asset_context()
+
+    enrichable_items_inventory(ctx, girder)
+
+    datafiles_dts = {call.args[1] for call in mock_datafiles.call_args_list}
+    helix_dts = all_in_scope_data_types() - PARTITION_AWARE_DATA_TYPES
+    assert helix_dts, "HELIX data types expected in scope"
+    assert helix_dts <= datafiles_dts
+
+
+@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
+@patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
+def test_items_carry_full_meta_through_inventory(mock_datafiles, mock_partition):
+    """Regression: partition-sourced items keep full meta (experiment_date)."""
+    def partition_side_effect(_client, dt):
+        if dt == "xrd_raw":
+            return [
+                _make_item(
+                    "xrd_raw",
+                    igsn="JHAMAB00007",
+                    experiment_date="2026-04-16",
+                    prov={"wasDerivedFrom": "parent-id"},
+                ),
+            ]
+        return []
+
+    mock_partition.side_effect = partition_side_effect
+    mock_datafiles.return_value = []
+    girder = MagicMock()
+    ctx = build_asset_context()
+
+    result = enrichable_items_inventory(ctx, girder)
+
+    assert len(result["MAXIMA/xrd_raw"]) == 1
+    meta = result["MAXIMA/xrd_raw"][0]["meta"]
+    assert meta["experiment_date"] == "2026-04-16"
+    assert meta["prov"] == {"wasDerivedFrom": "parent-id"}
 
 
 # ── inventory_nonempty_per_instrument check ─────────────────────────
