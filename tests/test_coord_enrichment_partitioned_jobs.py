@@ -73,7 +73,7 @@ def test_defs_loads_without_errors():
     assert len(repo.job_names) >= 5
 
 
-def test_version_is_0_5_0():
+def test_version_is_0_6_0():
     import helix_dagster
 
-    assert helix_dagster.__version__ == "0.5.0"
+    assert helix_dagster.__version__ == "0.6.0"

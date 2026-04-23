@@ -13,7 +13,10 @@ from dagster import (
     asset_check,
 )
 
-from helix_dagster.girder_io import fetch_all_aimdl_datafiles
+from helix_dagster.girder_io import (
+    fetch_all_aimdl_datafiles,
+    fetch_items_by_partition,
+)
 from helix_dagster.instruments import (
     all_in_scope_data_types,
     instrument_for_data_type,
@@ -21,6 +24,14 @@ from helix_dagster.instruments import (
 from helix_dagster.resources import GirderConnection
 
 logger = logging.getLogger(__name__)
+
+# Data types served by the partition-aware endpoints
+# (/aimdl/partition + /aimdl/partition/details). These return items
+# with full meta (experiment_date, prov, checksum, ...) intact,
+# unlike /aimdl/datafiles which strips meta to data_type and igsn.
+PARTITION_AWARE_DATA_TYPES = frozenset(
+    {"xrd_raw", "xrf_raw", "xrd_derived", "xrd_metadata"}
+)
 
 MAXIMA_RAW_PARTITIONS = StaticPartitionsDefinition(
     ["MAXIMA/xrd_raw", "MAXIMA/xrf_raw"]
@@ -94,7 +105,10 @@ def enrichable_items_inventory(
     context.log.info("Fetching inventory for data types: %s", data_types)
 
     for dt in data_types:
-        items = fetch_all_aimdl_datafiles(girder, dt)
+        if dt in PARTITION_AWARE_DATA_TYPES:
+            items = fetch_items_by_partition(girder, dt)
+        else:
+            items = fetch_all_aimdl_datafiles(girder, dt)
         in_scope = [it for it in items if _is_in_scope(it)]
         if dt == "xrd_derived":
             in_scope = filter_to_raw_subfolder(in_scope, girder)

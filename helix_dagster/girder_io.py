@@ -151,3 +151,53 @@ def fetch_all_aimdl_datafiles(client, data_type):
             break
         offset += AIMDL_PAGE_LIMIT
     return all_items
+
+
+def fetch_partition_keys(client, data_type):
+    """Return the partition index for a partition-aware data_type.
+
+    Calls ``GET /aimdl/partition?dataType=<data_type>`` and returns the
+    response dict, keyed by ``"<igsn>//<experiment_date>"`` with
+    payload-hash values. Used to enumerate all runs of a given data
+    type before fetching full-meta items per key.
+    """
+    return client.get(
+        "aimdl/partition",
+        parameters={"dataType": data_type},
+    )
+
+
+def fetch_items_by_partition(client, data_type):
+    """Fetch all items of a partition-aware data_type with FULL meta.
+
+    Calls ``/aimdl/partition`` once to enumerate keys, then
+    ``/aimdl/partition/details`` once per key. Returns a flat list of
+    Girder item dicts with full meta (``experiment_date``, ``prov``,
+    ``checksum``, etc.) preserved — unlike ``/aimdl/datafiles`` which
+    strips meta down to ``data_type`` and ``igsn``.
+
+    Partition keys with empty details are silently skipped.
+
+    Parameters
+    ----------
+    client : GirderClient
+        Authenticated Girder client.
+    data_type : str
+        A partition-aware ``meta.data_type`` (e.g. ``xrd_raw``).
+
+    Returns
+    -------
+    list[dict]
+        All items for the data_type with full meta.
+    """
+    keys = fetch_partition_keys(client, data_type)
+    all_items = []
+    for key in keys:
+        details = client.get(
+            "aimdl/partition/details",
+            parameters={"key": key, "dataType": data_type},
+        )
+        if not details:
+            continue
+        all_items.extend(details)
+    return all_items
