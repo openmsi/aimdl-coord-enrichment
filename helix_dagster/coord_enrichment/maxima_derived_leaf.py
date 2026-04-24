@@ -2,9 +2,9 @@
 
 Partitioned across MAXIMA/xrd_derived. For each in-scope xrd_derived
 item, inherit coordinates from the parent xrd_raw master.h5 (whose
-prov was healed in provenance_tagged_items), re-apply the parent's
-recorded MAXIMA transform version, and write coord_provenance with
-station_coord_source.kind == "inherited".
+prov was written upstream by the amdee_xrd Girder plugin), re-apply
+the parent's recorded MAXIMA transform version, and write
+coord_provenance with station_coord_source.kind == "inherited".
 """
 
 from typing import Any
@@ -40,7 +40,6 @@ MAXIMA_DERIVED_PARTITIONS = StaticPartitionsDefinition(
 
 @asset(
     partitions_def=MAXIMA_DERIVED_PARTITIONS,
-    deps=["provenance_tagged_items"],
 )
 def enriched_maxima_derived(
     context: AssetExecutionContext,

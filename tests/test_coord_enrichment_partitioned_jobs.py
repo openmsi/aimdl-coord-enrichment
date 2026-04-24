@@ -17,10 +17,15 @@ MAXIMA_RAW_UNPARTITIONED_UPSTREAMS = {
     AssetKey("coord_transform_config_snapshot"),
 }
 
-PROV_BACKED_UNPARTITIONED_UPSTREAMS = {
+HELIX_ALPSS_UNPARTITIONED_UPSTREAMS = {
     AssetKey("coord_transform_config_snapshot"),
     AssetKey("enrichable_items_inventory"),
-    AssetKey("provenance_tagged_items"),
+    AssetKey("helix_alpss_provenance_tagged"),
+}
+
+MAXIMA_DERIVED_UNPARTITIONED_UPSTREAMS = {
+    AssetKey("coord_transform_config_snapshot"),
+    AssetKey("enrichable_items_inventory"),
 }
 
 
@@ -67,17 +72,24 @@ def test_maxima_raw_job_selection():
     }
 
 
-@pytest.mark.parametrize(
-    "job_name",
-    ["coord_enrichment_helix_alpss_job", "coord_enrichment_maxima_derived_job"],
-)
-def test_prov_backed_jobs_include_unpartitioned_upstreams(job_name):
-    job = REPO.get_job(job_name)
+def test_helix_alpss_job_includes_unpartitioned_upstreams():
+    job = REPO.get_job("coord_enrichment_helix_alpss_job")
     asset_keys = job.asset_layer.executable_asset_keys
-    assert PROV_BACKED_UNPARTITIONED_UPSTREAMS.issubset(asset_keys), (
-        f"{job_name} missing upstreams: "
-        f"{PROV_BACKED_UNPARTITIONED_UPSTREAMS - asset_keys}"
+    assert HELIX_ALPSS_UNPARTITIONED_UPSTREAMS.issubset(asset_keys), (
+        "coord_enrichment_helix_alpss_job missing upstreams: "
+        f"{HELIX_ALPSS_UNPARTITIONED_UPSTREAMS - asset_keys}"
     )
+
+
+def test_maxima_derived_job_includes_unpartitioned_upstreams():
+    job = REPO.get_job("coord_enrichment_maxima_derived_job")
+    asset_keys = job.asset_layer.executable_asset_keys
+    assert MAXIMA_DERIVED_UNPARTITIONED_UPSTREAMS.issubset(asset_keys), (
+        "coord_enrichment_maxima_derived_job missing upstreams: "
+        f"{MAXIMA_DERIVED_UNPARTITIONED_UPSTREAMS - asset_keys}"
+    )
+    # Step 5: no provenance asset in the selection any more.
+    assert AssetKey("helix_alpss_provenance_tagged") not in asset_keys
 
 
 def test_original_coord_enrichment_job_unchanged():

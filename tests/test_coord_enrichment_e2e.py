@@ -24,7 +24,9 @@ from helix_dagster.coord_enrichment.enrichment_leaves import enriched_maxima_raw
 from helix_dagster.coord_enrichment.inventory import enrichable_items_inventory
 from helix_dagster.coord_enrichment.manifest import coord_enrichment_manifest
 from helix_dagster.coord_enrichment.pdv_observer import helix_pdv_coverage_observer
-from helix_dagster.coord_enrichment.provenance_tagging import provenance_tagged_items
+from helix_dagster.coord_enrichment.provenance_tagging import (
+    helix_alpss_provenance_tagged,
+)
 from helix_dagster.coord_enrichment.report import coord_enrichment_report
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -116,7 +118,7 @@ def _run_full_dag(xrd_items, xrf_items, girder_mock):
         "helix_dagster.coord_enrichment.provenance_tagging.fetch_all_aimdl_datafiles",
         return_value=[],
     ):
-        tagging_result = provenance_tagged_items(
+        tagging_result = helix_alpss_provenance_tagged(
             tagging_ctx, config_live, inventory, girder_mock,
         )
 

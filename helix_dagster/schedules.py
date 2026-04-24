@@ -36,18 +36,17 @@ def _dry_run_config(op_names: list[str]) -> dict:
 
 
 _STATE_REPORT_OPS = [
-    "provenance_tagged_items",
+    "helix_alpss_provenance_tagged",
     "coord_enrichment_manifest",
 ]
 _MAXIMA_RAW_OPS = [
     "enriched_maxima_raw",
 ]
 _HELIX_ALPSS_OPS = [
-    "provenance_tagged_items",
+    "helix_alpss_provenance_tagged",
     "enriched_helix_alpss",
 ]
 _MAXIMA_DERIVED_OPS = [
-    "provenance_tagged_items",
     "enriched_maxima_derived",
 ]
 

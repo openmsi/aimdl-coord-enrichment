@@ -32,17 +32,16 @@ from helix_dagster.coord_enrichment import (
     enrichment_success_rate_helix_alpss,
     enrichment_success_rate_maxima_derived,
     enrichment_success_rate_maxima_raw,
+    helix_alpss_provenance_tagged,
     helix_pdv_coverage_observer,
     inventory_nonempty_per_instrument,
     no_coord_transform_failures_helix_alpss,
     no_coord_transform_failures_maxima_derived,
     no_coord_transform_failures_maxima_raw,
     pdv_coverage_above_threshold,
-    provenance_tagged_items,
 )
 from helix_dagster.coord_enrichment.provenance_tagging import (
     all_helix_alpss_tagged,
-    maxima_prov_targets_resolve,
 )
 from helix_dagster.resources import GirderConnection, GirderCredentials
 from helix_dagster.schedules import (
@@ -62,7 +61,7 @@ coord_enrichment_job = define_asset_job(
     selection=AssetSelection.assets(
         coord_transform_config_snapshot,
         enrichable_items_inventory,
-        provenance_tagged_items,
+        helix_alpss_provenance_tagged,
         helix_pdv_coverage_observer,
         coord_enrichment_report,
         coord_enrichment_manifest,
@@ -90,7 +89,7 @@ coord_enrichment_helix_alpss_job = define_asset_job(
     selection=AssetSelection.assets(
         coord_transform_config_snapshot,
         enrichable_items_inventory,
-        provenance_tagged_items,
+        helix_alpss_provenance_tagged,
         enriched_helix_alpss,
     ),
 )
@@ -100,7 +99,6 @@ coord_enrichment_maxima_derived_job = define_asset_job(
     selection=AssetSelection.assets(
         coord_transform_config_snapshot,
         enrichable_items_inventory,
-        provenance_tagged_items,
         enriched_maxima_derived,
     ),
 )
@@ -120,7 +118,7 @@ defs = Definitions(
         # coord_enrichment (Phase 3)
         coord_transform_config_snapshot,
         enrichable_items_inventory,
-        provenance_tagged_items,
+        helix_alpss_provenance_tagged,
         enriched_maxima_raw,
         coord_enrichment_report,
         coord_enrichment_manifest,
@@ -140,7 +138,6 @@ defs = Definitions(
         # coord_enrichment (Phase 3)
         inventory_nonempty_per_instrument,
         all_helix_alpss_tagged,
-        maxima_prov_targets_resolve,
         enrichment_success_rate_maxima_raw,
         no_coord_transform_failures_maxima_raw,
         # coord_enrichment (Phase 4)

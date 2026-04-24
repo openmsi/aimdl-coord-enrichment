@@ -59,7 +59,7 @@ def test_all_schedules_default_stopped():
 def test_state_report_runconfig_is_dry_run():
     context = build_schedule_context()
     result = coord_enrichment_state_report_schedule(context)
-    assert result.run_config["ops"]["provenance_tagged_items"]["config"]["dry_run"] is True
+    assert result.run_config["ops"]["helix_alpss_provenance_tagged"]["config"]["dry_run"] is True
     assert result.run_config["ops"]["coord_enrichment_manifest"]["config"]["dry_run"] is True
 
 

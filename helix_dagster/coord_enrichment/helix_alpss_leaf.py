@@ -2,8 +2,8 @@
 
 Partitioned across the three ALPSS data-type variants. For each
 in-scope ALPSS item, inherit coordinates from the parent PDV trace
-(tagged by provenance_tagged_items), re-apply the parent's recorded
-HELIX transform version, and write coord_provenance with
+(tagged by helix_alpss_provenance_tagged), re-apply the parent's
+recorded HELIX transform version, and write coord_provenance with
 station_coord_source.kind == "inherited".
 """
 
@@ -44,7 +44,7 @@ HELIX_ALPSS_PARTITIONS = StaticPartitionsDefinition(
 
 @asset(
     partitions_def=HELIX_ALPSS_PARTITIONS,
-    deps=["provenance_tagged_items"],
+    deps=["helix_alpss_provenance_tagged"],
 )
 def enriched_helix_alpss(
     context: AssetExecutionContext,

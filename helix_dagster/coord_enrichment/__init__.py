@@ -11,7 +11,7 @@ Module layout (populated across Phase 3 steps):
   config.py              — shared Dagster Config class
   config_snapshot.py     — coord_transform_config_snapshot asset
   inventory.py           — enrichable_items_inventory asset + partitions
-  provenance_tagging.py  — provenance_tagged_items asset + checks
+  provenance_tagging.py  — helix_alpss_provenance_tagged asset + check
   enrichment_leaves.py   — enriched_maxima_raw asset + checks
   overwrite.py           — pure overwrite-policy evaluator
   cache.py               — per-run-folder cache helpers
@@ -34,8 +34,7 @@ from helix_dagster.coord_enrichment.inventory import (
 )
 from helix_dagster.coord_enrichment.provenance_tagging import (
     all_helix_alpss_tagged,
-    maxima_prov_targets_resolve,
-    provenance_tagged_items,
+    helix_alpss_provenance_tagged,
 )
 from helix_dagster.coord_enrichment.enrichment_leaves import (
     enriched_maxima_raw,
@@ -77,8 +76,7 @@ __all__ = [
     "filter_to_raw_subfolder",
     "inventory_nonempty_per_instrument",
     "all_helix_alpss_tagged",
-    "maxima_prov_targets_resolve",
-    "provenance_tagged_items",
+    "helix_alpss_provenance_tagged",
     "enriched_maxima_raw",
     "enrichment_success_rate_maxima_raw",
     "no_coord_transform_failures_maxima_raw",

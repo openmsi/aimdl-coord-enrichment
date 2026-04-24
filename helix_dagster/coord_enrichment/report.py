@@ -11,7 +11,7 @@ def coord_enrichment_report(
     enriched_maxima_raw: dict[str, Any],
     enriched_helix_alpss: dict[str, Any],
     enriched_maxima_derived: dict[str, Any],
-    provenance_tagged_items: dict[str, Any],
+    helix_alpss_provenance_tagged: dict[str, Any],
     helix_pdv_coverage_observer: dict[str, Any],
 ) -> dict[str, Any]:
     """Aggregate counts across all enrichment leaves and the PDV observer."""
@@ -51,10 +51,10 @@ def coord_enrichment_report(
     report = {
         "leaves": leaves_by_partition,
         "tagging": {
-            "counters": provenance_tagged_items["counters"],
-            "unresolved_count": len(provenance_tagged_items["unresolved"]),
-            "write_ops_count": len(provenance_tagged_items["write_ops"]),
-            "dry_run": provenance_tagged_items["dry_run"],
+            "counters": helix_alpss_provenance_tagged["counters"],
+            "unresolved_count": len(helix_alpss_provenance_tagged["unresolved"]),
+            "write_ops_count": len(helix_alpss_provenance_tagged["write_ops"]),
+            "dry_run": helix_alpss_provenance_tagged["dry_run"],
         },
         "coverage": {
             "pdv_trace": helix_pdv_coverage_observer,
@@ -82,7 +82,7 @@ def coord_enrichment_report(
         ),
         "dry_run_aggregate": MetadataValue.bool(
             any(leaf["dry_run"] for leaf in leaves_by_partition.values())
-            or bool(provenance_tagged_items["dry_run"])
+            or bool(helix_alpss_provenance_tagged["dry_run"])
         ),
     })
     return report
