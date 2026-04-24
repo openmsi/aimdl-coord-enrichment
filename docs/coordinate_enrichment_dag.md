@@ -1,8 +1,9 @@
 # Coordinate Enrichment DAG — Design Document
 
-**Status:** draft
-**Branch:** `refactor/asset-dag`
+**Status:** living document — post issue #23 snapshot
+**Branch:** `refactor/issue23-dynamic-partitions` (merging to `refactor/asset-dag`)
 **Prepared:** 2026-04-19
+**Updated:** 2026-04-24 for the dynamic-partition + provenance-split refactor
 **Scope:** new Dagster workflow that enriches AIMD-L Girder items with
 sample-frame coordinate metadata using versioned coordinate transforms from
 the `coordinate-transformer` package. HELIX and MAXIMA today; SPHINX deferred.
@@ -49,9 +50,12 @@ complete, both jobs write the same `coord_provenance` schema.
 - Writing `Station_X`, `Station_Y`, `Sample_X`, `Sample_Y`, and a full
   `coord_provenance` block to each enriched item
 - Overwrite-if-transform-differs policy (see §6)
-- An upstream provenance-tagging asset that guarantees
-  `meta.prov.wasDerivedFrom` is present and intra-collection-resolvable on
-  derived items before enrichment runs
+- A HELIX-only provenance-tagging asset
+  (`helix_alpss_provenance_tagged`) that writes
+  `meta.prov.wasDerivedFrom` on ALPSS items before
+  `enriched_helix_alpss` runs. MAXIMA `xrd_derived` prov is
+  **not** written here — amdee_xrd owns that upstream and we
+  verify it via an asset check on `enriched_maxima_derived`.
 
 ### Out of scope (today)
 
@@ -110,70 +114,104 @@ Key facts that drive the design:
 ## 4. DAG architecture
 
 ```
-                    provenance_tagged_items
-                    ✓ all_helix_alpss_tagged
-                    ✓ maxima_prov_targets_resolve
+             ┌─────────────────────────┐
+             │ maxima_raw_discovery_   │
+             │ sensor (STOPPED default)│
+             │ polls /aimdl/partition  │
+             │ adds run keys, emits    │
+             │ RunRequests per         │
+             │ (data_type, aimdl_key)  │
+             └────────────┬────────────┘
+                          │ (dynamic partition registration
+                          │  + run-keyed RunRequests)
+                          ▼
+                    enriched_maxima_raw
+                    MultiPartitions(
+                      data_type: {xrd_raw, xrf_raw},
+                      run: Dynamic "maxima_raw_run"
+                    )
+                    ✓ enrichment_success_rate_maxima_raw
+                    ✓ no_coord_transform_failures_maxima_raw
+                          │ AllPartitionMapping
+                          ▼
+                    enriched_maxima_derived  (single static partition)
+                    ✓ enrichment_success_rate_maxima_derived
+                    ✓ no_coord_transform_failures_maxima_derived
+                    ✓ maxima_xrd_derived_provenance_valid  (ERROR)
+
+   helix_alpss_provenance_tagged
+   ✓ all_helix_alpss_tagged
+             │
+             ▼
+     enriched_helix_alpss  (HELIX/pdv_alpss_* static partitions)
+     ✓ enrichment_success_rate_helix_alpss
+     ✓ no_coord_transform_failures_helix_alpss
+
+              (all leaves also consume
+               coord_transform_config_snapshot and
+               enrichable_items_inventory — except
+               enriched_maxima_raw, which fetches its own
+               partition via /aimdl/partition/details)
+
+                    coord_enrichment_report
                              │
                              ▼
-                    enrichable_items_inventory
-                    ✓ inventory_nonempty_per_instrument
-                             │
-                             ▼
-                    coord_transform_config_snapshot
-                             │
-                             ▼
-             ┌───────────────┼───────────────┐
-             ▼               ▼               ▼
-   enriched_helix_pdv  enriched_maxima_raw   (future instruments)
-             │               │
-             ▼               ▼
-   enriched_helix_alpss  enriched_maxima_derived
-   ✓ enrichment_success_rate (shared check across all four leaves)
-   ✓ no_coord_transform_failures
-             │               │
-             └───────┬───────┘
-                     ▼
-             coord_enrichment_report
-                     │
-                     ▼
-             coord_enrichment_manifest
-             (writes meta.coord_enrichment_status to a job-scope Girder item)
+                    coord_enrichment_manifest
+                    (writes meta.coord_enrichment_status to a job-scope Girder item)
 ```
 
 ### 4.1 Asset responsibilities
 
 | Asset | I/O | Responsibility |
 |---|---|---|
-| `provenance_tagged_items` | Girder read + **write** | Ensure every in-scope derived item has a resolvable `meta.prov.wasDerivedFrom`. Writes prov only when missing or dangling. |
-| `enrichable_items_inventory` | Girder read | Pull all items with `meta.igsn` and an in-scope `meta.data_type`. Partition by `(instrument, data_type)`. |
+| `helix_alpss_provenance_tagged` | Girder read + **write** | Write `meta.prov.wasDerivedFrom` on HELIX ALPSS items (`pdv_alpss_output`, `pdv_alpss_result`, `pdv_alpss_results`). Resolves the parent PDV trace by filename stem. HELIX-only; MAXIMA prov is owned by amdee_xrd upstream. |
+| `enrichable_items_inventory` | Girder read | Pull all items with `meta.igsn` and an in-scope `meta.data_type`. Partition by `(instrument, data_type)`. Consumed by the HELIX ALPSS leaf and the MAXIMA derived leaf. `enriched_maxima_raw` does **not** read this inventory. |
 | `coord_transform_config_snapshot` | none | Capture the YAML contents, its sha256, the `coordinate-transformer` version, and the version list per instrument. Pure transformation; referenced by all downstream writes. |
-| `enriched_helix_pdv` | Girder **write** | Already handled by the existing `process_helix_assets_job`. This asset is an **observer** in the new DAG — it lists PDV traces that already carry `Sample_X/Y` and reports completeness. No writes. |
-| `enriched_helix_alpss` | Girder **write** | For each ALPSS item, follow `prov.wasDerivedFrom` to the parent PDV trace, copy `Station_X/Y`, recompute `Sample_X/Y` with the ALPSS item's inherited timestamp, write with fresh provenance. |
-| `enriched_maxima_raw` | Girder **write** | For each `xrd_raw` or `xrf_raw`, parse scan-point index from filename, read `instructions.txt` once per run folder, transform, write. |
-| `enriched_maxima_derived` | Girder **write** | For each in-raw `xrd_derived`, follow `prov.wasDerivedFrom` to the master.h5, copy its coords, write with fresh provenance. |
+| `helix_pdv_coverage_observer` | Girder read | Read-only observer asset that reports the fraction of PDV traces carrying `Sample_X/Y` (produced by the existing spreadsheet DAG). Feeds the `pdv_coverage_above_threshold` WARN check. |
+| `enriched_helix_alpss` | Girder **write** | Depends on `helix_alpss_provenance_tagged`. For each ALPSS item, follow `prov.wasDerivedFrom` to the parent PDV trace, copy `Station_X/Y`, re-apply the parent's recorded HELIX transform version, write with fresh `coord_provenance`. |
+| `enriched_maxima_raw` | Girder **write** | For each partition `(data_type ∈ {xrd_raw, xrf_raw}, run="<igsn>//<experiment_date>")`, fetch items via `/aimdl/partition/details?dataType=<dt>&key=<aimdl_key>`, fetch the matching `xrd_metadata/instructions.txt` the same way, parse the scan-point index from filenames, transform using `meta.experiment_date`, write. No dep on the inventory or any provenance asset. |
+| `enriched_maxima_derived` | Girder **write** | Depends on `enriched_maxima_raw` via `AllPartitionMapping` (single `MAXIMA/xrd_derived` static partition). For each in-raw `xrd_derived`, read the amdee_xrd-written `prov.wasDerivedFrom` or `prov.isPartOf` to find its master.h5, inherit coords. Does not re-write prov. |
 | `coord_enrichment_report` | none | Aggregate per-leaf stats: items seen, items skipped (policy), items written, coord transform failures, dangling prov, unresolved timestamps. |
 | `coord_enrichment_manifest` | Girder **write** | Write a per-run summary to a known "coordinate DAG status" Girder item so other systems can observe progress. |
 
 ### 4.2 Partitioning
 
-Each enrichment leaf runs as a **dynamic partition** keyed by
-`(instrument, data_type)`. Concretely:
-`HELIX/pdv_alpss_output`, `HELIX/pdv_alpss_result`, `HELIX/pdv_alpss_results`,
-`MAXIMA/xrd_raw`, `MAXIMA/xrf_raw`, `MAXIMA/xrd_derived`.
+Partition shapes are deliberately heterogeneous because the upstream
+realities differ:
 
-Why: a partial failure on (say) MAXIMA xrf_raw timestamps should not block
-HELIX ALPSS propagation. Partitioning also lets Dagster report per-class
-coverage and surfaces which subsets still have gaps.
+- **`enriched_maxima_raw`** —
+  `MultiPartitionsDefinition({data_type: Static(["xrd_raw", "xrf_raw"]), run: Dynamic("maxima_raw_run")})`.
+  Each partition corresponds to one AIMD-L run identified by the
+  literal partition string `"<igsn>//<experiment_date>"` emitted by
+  the Girder plugin. `maxima_raw_discovery_sensor` registers new
+  `run` keys as they appear upstream. Scope: one sample × one
+  modality × one experiment date per partition.
+- **`enriched_maxima_derived`** — `StaticPartitionsDefinition(["MAXIMA/xrd_derived"])`,
+  single partition, depends on raw via `AllPartitionMapping`. The
+  derived coverage problem is a single aggregate question — "did
+  every in-raw xrd_derived inherit from its parent?" — so
+  repartitioning to match raw's `(data_type, run)` shape was
+  explicitly deferred (α-vs-β, α chosen in issue #23).
+- **`enriched_helix_alpss`** —
+  `StaticPartitionsDefinition(["HELIX/pdv_alpss_output", "HELIX/pdv_alpss_result", "HELIX/pdv_alpss_results"])`.
+  Three ALPSS filename variants processed independently. Keeping
+  HELIX static until the HELIX folder sensor is rebuilt (out of
+  scope for issue #23).
+
+A partial failure on one `(data_type, run)` partition should not
+block other partitions — dynamic raw partitioning is what gives us
+per-run idempotency and per-run audit trails.
 
 ### 4.3 Asset checks
 
 | Check | Asset | Severity | Condition |
 |---|---|---|---|
-| `all_helix_alpss_tagged` | `provenance_tagged_items` | ERROR | any `pdv_alpss_*` item left with unresolvable prov after the tagging pass |
-| `maxima_prov_targets_resolve` | `provenance_tagged_items` | ERROR | any in-scope MAXIMA derived item whose `wasDerivedFrom` target is not an item in the collection |
+| `all_helix_alpss_tagged` | `helix_alpss_provenance_tagged` | ERROR | any `pdv_alpss_*` item left with unresolvable prov after the tagging pass |
+| `maxima_xrd_derived_provenance_valid` | `enriched_maxima_derived` | ERROR | any `xrd_derived` item has a `resolution_errors` entry with `stage="inherit_from_parent"` — i.e. missing/dangling `wasDerivedFrom` or parent outside the inventory slice. Non-mutating — amdee_xrd remains the sole writer. |
 | `inventory_nonempty_per_instrument` | `enrichable_items_inventory` | WARN | any partition has zero candidates |
-| `enrichment_success_rate` | each enrichment leaf | WARN | <90% of partition items successfully enriched |
-| `no_coord_transform_failures` | each enrichment leaf | WARN | any transform call raised |
+| `enrichment_success_rate_<leaf>` | each enrichment leaf | WARN | <90% of partition items successfully enriched |
+| `no_coord_transform_failures_<leaf>` | each enrichment leaf | WARN | any transform call raised |
+| `pdv_coverage_above_threshold` | `helix_pdv_coverage_observer` | WARN | PDV traces with `Sample_X/Y` fall below threshold (currently 0.5; placeholder) |
 
 ---
 
@@ -408,14 +446,21 @@ helix_dagster/                                 (existing — renamed candidate: 
 │   ├── base.py                                #   Instrument protocol
 │   ├── helix.py                               #   filename timestamp, alpss stem
 │   └── maxima.py                              #   scan_point parser, instructions.txt walker
-├── coord_enrichment/                          # NEW — the coordinate enrichment DAG
+├── coord_enrichment/                          # the coordinate enrichment DAG
 │   ├── __init__.py
-│   ├── assets.py                              #   provenance_tagged_items, inventory, 4 enrichment leaves, report, manifest
-│   ├── checks.py                              #   asset checks for the new DAG
-│   ├── provenance.py                          #   tagging logic (HELIX filename-stem matching, MAXIMA heal)
-│   ├── resolution.py                          #   coord + timestamp resolvers per station_coord_source.kind
-│   ├── config.py                              #   transform YAML snapshotting, sha256
-│   └── writes.py                              #   overwrite-policy evaluator, Girder write wrapper
+│   ├── config.py                              #   CoordEnrichmentConfig
+│   ├── config_snapshot.py                     #   coord_transform_config_snapshot
+│   ├── inventory.py                           #   enrichable_items_inventory + MultiPartitionsDefinition
+│   ├── provenance_tagging.py                  #   helix_alpss_provenance_tagged (HELIX-only)
+│   ├── enrichment_leaves.py                   #   enriched_maxima_raw (partition-scoped fetches)
+│   ├── helix_alpss_leaf.py                    #   enriched_helix_alpss (inheritance)
+│   ├── maxima_derived_leaf.py                 #   enriched_maxima_derived + maxima_xrd_derived_provenance_valid check
+│   ├── inheritance.py                         #   parent-lookup helper used by both inheritance leaves
+│   ├── pdv_observer.py                        #   helix_pdv_coverage_observer
+│   ├── overwrite.py                           #   overwrite-policy evaluator
+│   ├── cache.py                               #   per-run-folder cache helpers
+│   ├── report.py                              #   coord_enrichment_report
+│   └── manifest.py                            #   coord_enrichment_manifest
 tests/
 ├── …existing…
 ├── test_instruments.py                        # per-adapter contract tests
@@ -472,26 +517,28 @@ healing), and package-level `resolve_parent_item_id` /
 instructions.txt lookups is deliberately deferred to Phase 3's DAG
 asset.
 
-### Phase 3 — `coord_enrichment` DAG, MAXIMA raw first ✅ complete
+### Phase 3 — `coord_enrichment` DAG, MAXIMA raw first ✅ complete (superseded by Phase 6)
 
-1. `provenance_tagged_items` asset — HELIX ALPSS tagging and MAXIMA
-   prov-heal only. No coordinate writes.
+1. A combined provenance-tagging asset (since split along data-flow
+   lines in Phase 6; see there for the current shape).
 2. `enrichable_items_inventory` and `coord_transform_config_snapshot`.
-3. `enriched_maxima_raw` — `xrd_raw` + `xrf_raw` partitions.
+3. `enriched_maxima_raw` — initially two static partitions by
+   `data_type`; reshaped in Phase 6 to a `(data_type, run)`
+   `MultiPartitionsDefinition`.
 4. `coord_enrichment_report` and `coord_enrichment_manifest` (minimal).
 5. Dry-run default; `--live` config flag for writes.
 6. Integration test against `JHAMAL00018-009_…_16-56-16` (25 scan
    points): expect 50 writes (25 xrd_raw + 25 xrf_raw) and provenance
    round-tripping.
 
-**Status (landed on `refactor/asset-dag`):** Six assets shipped —
-`coord_transform_config_snapshot`, `enrichable_items_inventory`,
-`provenance_tagged_items`, `enriched_maxima_raw` (partitioned
-MAXIMA/xrd_raw + MAXIMA/xrf_raw), `coord_enrichment_report`, and
-`coord_enrichment_manifest`. `coord_enrichment_job` is wired into
-`defs`. End-to-end integration test materializes 50 writes against
-the JHAMAL00018-009 fixture. Dry-run is the default;
-`--live` runs flip `CoordEnrichmentConfig.dry_run=False`.
+**Status (originally landed on `refactor/asset-dag`; reshaped in issue #23 — see Phase 6):**
+The six originally-shipped assets are still present in name, but
+the tagger asset was split into a HELIX-only mutator plus a
+MAXIMA-derived-side asset check, and `enriched_maxima_raw` was
+repartitioned onto a `MultiPartitionsDefinition({data_type, run})`.
+`coord_enrichment_job` is wired into `defs`. End-to-end integration
+test materializes writes against the JHAMAL00018-009 fixture. Dry-run
+is the default; `--live` runs flip `CoordEnrichmentConfig.dry_run=False`.
 
 ### Phase 4 — derived inheritance leaves ✅ complete
 
@@ -548,6 +595,51 @@ bumped to 0.4.0.
 Version bumped to 0.5.0. The existing
 spreadsheet-driven `process_helix_assets_job` is unchanged.
 
+### Phase 6 — dynamic partitions for MAXIMA raw + provenance split ✅ complete
+
+Tracked as issue #23. Nine-step refactor on
+`refactor/issue23-dynamic-partitions`. Changes:
+
+1. **MAXIMA raw partitioning.** Replaced
+   `StaticPartitionsDefinition(["MAXIMA/xrd_raw", "MAXIMA/xrf_raw"])`
+   with
+   `MultiPartitionsDefinition({data_type: Static(["xrd_raw", "xrf_raw"]), run: DynamicPartitionsDefinition("maxima_raw_run")})`.
+   `enriched_maxima_raw` now fetches its own items per partition
+   via `/aimdl/partition/details?dataType=<dt>&key=<igsn//experiment_date>`
+   and no longer depends on `enrichable_items_inventory` or the
+   provenance-tagging asset.
+2. **Discovery sensor.** Added `maxima_raw_discovery_sensor` in
+   `helix_dagster/sensors.py`. Polls `/aimdl/partition` for
+   `xrd_raw`, `xrf_raw`, and `xrd_metadata`, adds each new
+   `"<igsn>//<experiment_date>"` to the dynamic `maxima_raw_run`
+   dim, and emits one `RunRequest` per observed `(data_type, aimdl_key)`
+   with a dedup run_key of shape
+   `coord-enrichment|<dt>|<aimdl_key>|raw=<h>|xrd_metadata=<h>`
+   (falling back to `"no-xrd-metadata"` when no metadata entry
+   exists). STOPPED by default.
+3. **Gap-filling reconciliation.** The weekly
+   `coord_enrichment_maxima_raw_weekly_schedule` now enumerates all
+   registered `(data_type, run)` partitions and emits a RunRequest
+   only for partitions without a successful materialization. Still
+   STOPPED by default, still dry-run only.
+4. **Provenance split.**
+   - HELIX ALPSS parent tagging (mutating) lives in its own asset
+     `helix_alpss_provenance_tagged`. HELIX-only; MAXIMA items are
+     not touched by the pipeline's provenance writers.
+   - MAXIMA `xrd_derived` prov verification (non-mutating) lives
+     in the asset check `maxima_xrd_derived_provenance_valid` on
+     `enriched_maxima_derived`. It inspects `resolution_errors`
+     with `stage="inherit_from_parent"` and fails if any exist.
+   - The previously-combined MAXIMA-prov-heal check is removed;
+     amdee_xrd is now treated as the sole writer for
+     `xrd_derived` prov, and the pipeline only reads and verifies.
+5. **Derived lineage.** `enriched_maxima_derived` now explicitly
+   depends on `enriched_maxima_raw` via `AllPartitionMapping`. The
+   derived partition remains single-static (decision α; β —
+   repartitioning derived to match raw — is a deferred follow-up).
+
+Version bumped to 0.6.0.
+
 ---
 
 ## 11. Environment variables
@@ -574,8 +666,11 @@ None are blockers, but flagging for the next conversation:
    only the items touched in the last hour) are a possible later
    optimization.
 
-   > **Resolved in Phase 5**: schedule. Per-folder sensor is Phase 6
-   > work.
+   > **Resolved in Phase 5**: schedule (dry-run, STOPPED by default).
+   > **Extended in Phase 6 (issue #23)**: `maxima_raw_discovery_sensor`
+   > now drives the MAXIMA raw job off AIMD-L partition keys; the
+   > weekly MAXIMA-raw schedule is gap-filling reconciliation. HELIX
+   > and MAXIMA derived remain schedule-only for now.
 3. **Error-aggregation granularity.** How much structured context does
    the manifest need about failures — is the aggregated count enough,
    or do we want the full failing-item id list to land in Girder?
@@ -587,9 +682,11 @@ None are blockers, but flagging for the next conversation:
    (rather than invokes) is cleaner architecturally. Low priority;
    useful once a second consumer of `prov.wasDerivedFrom` appears.
 
-   > **Deferred**: tagging asset runs in every partitioned job as
-   > an unpartitioned upstream. Extract to its own job only if a
-   > second consumer appears.
+   > **Deferred**: `helix_alpss_provenance_tagged` runs in every
+   > HELIX-ALPSS-touching job as an unpartitioned upstream. Extract
+   > to its own job only if a second consumer appears. MAXIMA
+   > `xrd_derived` prov is owned by amdee_xrd upstream — no
+   > pipeline-side tagging asset exists for it as of issue #23.
 5. **Annotation rule.** `from __future__ import annotations`
    breaks Dagster's Config schema resolution. Rule and
    enforcement test documented at

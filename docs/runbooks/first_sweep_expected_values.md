@@ -29,38 +29,47 @@ All 450 files carry `meta.igsn` and `meta.data_type`.
 |-------------------------------------|---------------------|
 | inventory_nonempty_per_instrument   | PASS                |
 | all_helix_alpss_tagged              | PASS (0 unresolved) |
-| maxima_prov_targets_resolve         | PASS (0 unresolved) |
 | pdv_coverage_above_threshold        | PASS if prior HELIX DAG has enriched the PDV traces; otherwise WARN -- this does not block enrichment |
+
+Note: MAXIMA xrd_derived prov is now verified by
+`maxima_xrd_derived_provenance_valid` (ERROR severity) on
+`enriched_maxima_derived`, not by the state-report job. It
+materializes only when the derived leaf runs.
 
 Asset output counters (from the Dagster UI):
 
 - `enrichable_items_inventory.total_items` -- expect ~> 350 (50+
   MAXIMA raw, ~75 MAXIMA derived, ~225 HELIX ALPSS variants,
-  after filtering out non-IGSN items and non-raw TIFFs)
-- `provenance_tagged_items.total_writes` on first dry-run:
-  roughly equal to (HELIX ALPSS item count) + (MAXIMA
-  xrd_derived item count needing heal); on subsequent dry-runs:
-  0 (already tagged, already correct)
+  after filtering out non-IGSN items and non-raw TIFFs).
+  As of issue #23, `enriched_maxima_raw` no longer consumes
+  this inventory — it fetches per-partition items directly
+  from `/aimdl/partition/details`.
+- `helix_alpss_provenance_tagged.total_writes` on first dry-run:
+  roughly equal to the HELIX ALPSS item count; on subsequent
+  dry-runs: 0 (already tagged, already correct). MAXIMA
+  xrd_derived items are no longer part of this counter — their
+  prov is owned by amdee_xrd upstream.
 
-### coord_enrichment_maxima_raw_job -- MAXIMA/xrd_raw partition
+### coord_enrichment_maxima_raw_partition_job -- one (data_type, run) partition
+
+Partition keys are
+`MultiPartitionKey({"data_type": "<xrd_raw|xrf_raw>", "run": "<igsn>//<experiment_date>"})`.
 
 | Asset check                                  | Expected |
 |---------------------------------------------|----------|
 | enrichment_success_rate_maxima_raw          | PASS (rate >= 0.9) |
 | no_coord_transform_failures_maxima_raw      | PASS     |
 
-Counts (on first live sweep):
+Counts (on first live sweep, per partition):
 
-- `seen` -- number of in-scope xrd_raw items
+- `seen` -- number of items for this `(data_type, run)`
 - `written` -- equal to `seen` minus resolution_errors and
   coord_failures
 - `simulated_dry_run` -- 0 when live
 - `skipped_no_change` -- 0 on first live write; will become the
-  bulk of subsequent runs
-
-### coord_enrichment_maxima_raw_job -- MAXIMA/xrf_raw partition
-
-Same shape as xrd_raw. Counts reflect xrf_raw items only.
+  bulk of subsequent runs triggered by the discovery sensor on
+  content-hash unchanged partitions (those are suppressed by the
+  dedup run_key anyway and will not produce a run)
 
 ### coord_enrichment_helix_alpss_job -- each ALPSS partition
 
@@ -79,6 +88,16 @@ singular/plural filename conventions and will vary by shot.
 |---------------------------------------------|----------|
 | enrichment_success_rate_maxima_derived      | PASS (rate >= 0.9) |
 | no_coord_transform_failures_maxima_derived  | PASS     |
+| maxima_xrd_derived_provenance_valid          | PASS (0 items with stage=inherit_from_parent errors) |
+
+The `maxima_xrd_derived_provenance_valid` check is ERROR-severity
+and non-mutating. It verifies that every in-scope xrd_derived item
+has a `prov.wasDerivedFrom` (or `isPartOf`) link written by
+amdee_xrd that resolves to an item in the current inventory slice.
+Failures point to either a missing prov link on the item (a
+data-hygiene problem upstream) or a parent not present in the
+inventory (an ingest lag). The pipeline does not heal these; raise
+with the amdee_xrd team.
 
 ## Tuning decisions after first sweep
 

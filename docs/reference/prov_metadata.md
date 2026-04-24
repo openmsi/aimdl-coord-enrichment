@@ -4,18 +4,42 @@ Reference for who writes which `meta.prov.*` key on Girder items in the
 AIMD-L collection, and what the coord-enrichment pipeline can rely on.
 
 Last verified: 2026-04-23 against `data.htmdec.org`.
+Updated 2026-04-24 to reflect the post–issue #23 split.
 
 ## TL;DR
 
 The coord-enrichment pipeline **reads** provenance fields written by
-upstream actors. For MAXIMA xrd items, it does **not** need to write
-`prov.wasDerivedFrom` or `prov.isPartOf` — those are already present
-from `amdee_xrd`. The pipeline's own write-only contribution is
-`meta.coord_provenance` on enriched items, which no other actor touches.
+upstream actors wherever it can. For MAXIMA xrd items, it does **not**
+write `prov.wasDerivedFrom` or `prov.isPartOf` — those are already
+present from `amdee_xrd` and are treated as read-only. The pipeline's
+own write-only contribution is `meta.coord_provenance` on enriched
+items, which no other actor touches.
 
 For HELIX ALPSS items, which fall outside `amdee_xrd`'s scope, the
-pipeline still needs to write `prov.wasDerivedFrom` linking the ALPSS
-result back to its parent `pdv_trace`.
+pipeline **does** write `prov.wasDerivedFrom` linking the ALPSS result
+back to its parent `pdv_trace`. This is the only place the pipeline
+ever mutates `meta.prov.*`.
+
+After issue #23 the provenance surface is split along the data-flow:
+
+- HELIX ALPSS parent tagging (a real mutation) lives in the asset
+  [`helix_alpss_provenance_tagged`][tag-asset]. `enriched_helix_alpss`
+  depends on it.
+- MAXIMA `xrd_derived` prov links are **verified**, not written, by
+  the asset check
+  [`maxima_xrd_derived_provenance_valid`][derived-check] on
+  `enriched_maxima_derived`. It inspects the leaf's
+  `resolution_errors` for any entry with
+  `stage == "inherit_from_parent"` and fails the check if any exist.
+  No mutation — the amdee_xrd Girder plugin is the sole writer for
+  these links.
+- MAXIMA raw (`xrd_raw`, `xrf_raw`) items get no `prov.*` from this
+  pipeline either. Their provenance is captured entirely through
+  `meta.coord_provenance` written by `enriched_maxima_raw` per
+  partition.
+
+[tag-asset]: ../../helix_dagster/coord_enrichment/provenance_tagging.py
+[derived-check]: ../../helix_dagster/coord_enrichment/maxima_derived_leaf.py
 
 ## Cast of actors
 
@@ -87,8 +111,8 @@ Writes two kinds of things, only on items it enriches:
   and Dagster run id. Written by the three enrichment leaves.
   **No other actor touches this field.**
 - `prov.wasDerivedFrom` — only on HELIX ALPSS items (by
-  `provenance_tagged_items`), linking an ALPSS result back to its
-  parent `pdv_trace`.
+  `helix_alpss_provenance_tagged`), linking an ALPSS result back to
+  its parent `pdv_trace`.
 
 Also writes the scientific coordinate fields: `Station_X`, `Station_Y`,
 `Sample_X`, `Sample_Y`.
@@ -136,9 +160,26 @@ upstream inputs, not derived outputs — correct and expected.
 **For HELIX ALPSS items:**
 
 - `amdee_xrd` does not touch these. The pipeline's
-  `provenance_tagged_items` asset still writes `prov.wasDerivedFrom` to
-  link ALPSS outputs to their parent `pdv_trace`. This is the one
-  remaining place the pipeline writes prov.
+  `helix_alpss_provenance_tagged` asset writes `prov.wasDerivedFrom`
+  to link ALPSS outputs to their parent `pdv_trace`. This is the one
+  place the pipeline mutates `meta.prov.*`.
+
+**For MAXIMA `xrd_derived` items:**
+
+- `amdee_xrd` already wrote `prov.wasDerivedFrom` (to the master.h5)
+  and `prov.wasGeneratedBy` (`"amdee_xrd-<version>"`). The pipeline
+  does **not** rewrite these. `enriched_maxima_derived` follows the
+  link to inherit coordinates; the asset check
+  `maxima_xrd_derived_provenance_valid` fails loudly if any item's
+  link cannot be resolved (missing prov, dangling target, or parent
+  outside the current inventory slice).
+
+**For MAXIMA raw (`xrd_raw`, `xrf_raw`) items:**
+
+- No `meta.prov.*` is added by this pipeline. `coord_provenance`
+  captures the full enrichment trace: the `instructions.txt` that
+  sourced the station coords, the transform version applied, and
+  the shot timestamp used for version selection.
 
 ## What the pipeline should NOT do
 

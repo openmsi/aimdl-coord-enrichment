@@ -40,13 +40,25 @@ who has read and understood this document.
 
 ## Dry-run rehearsal
 
-Run once with `dry_run=True` (the default). The simplest route is
-the Dagster UI: launch `coord_enrichment_maxima_raw_job` with
-partition `MAXIMA/xrd_raw` and leave config at default. Then do
-the same for:
+Run once with `dry_run=True` (the default).
 
-- `coord_enrichment_maxima_raw_job` / `MAXIMA/xrf_raw`
-- `coord_enrichment_helix_alpss_job` / each of three partitions
+**MAXIMA raw** is now partitioned on
+`MultiPartitionsDefinition({data_type, run})` where `data_type` ∈
+`{xrd_raw, xrf_raw}` and `run` is dynamic, keyed on the AIMD-L
+partition string `"<igsn>//<experiment_date>"`. Partition keys are
+populated by `maxima_raw_discovery_sensor` (STOPPED by default). To
+materialize by hand from the Dagster UI, launch
+`coord_enrichment_maxima_raw_partition_job` with a
+`MultiPartitionKey({"data_type": "<dt>", "run": "<igsn>//<experiment_date>"})`.
+Pick one `(data_type, run)` for rehearsal; you do not need to
+sweep every run during dry-run verification.
+
+Then dry-run the HELIX and MAXIMA-derived jobs, which still use
+static partitions:
+
+- `coord_enrichment_helix_alpss_job` — each of three ALPSS partitions
+  (`HELIX/pdv_alpss_output`, `HELIX/pdv_alpss_result`,
+  `HELIX/pdv_alpss_results`)
 - `coord_enrichment_maxima_derived_job` / `MAXIMA/xrd_derived`
 
 Verify every run:
@@ -54,12 +66,36 @@ Verify every run:
 - Ended green in the Dagster UI
 - The relevant `enrichment_success_rate_*` check passed
 - No `_coord_transform_failures_*` fired
+- For `enriched_maxima_derived`, `maxima_xrd_derived_provenance_valid`
+  (ERROR severity) passed
 - The asset output shows `simulated_dry_run` count > 0 and
   `written == 0`
 
 If any run shows resolution errors or unexpected skips, stop.
 Investigate, fix, and re-run the dry rehearsal before
 proceeding.
+
+### Enabling the discovery sensor
+
+For ongoing operation, the preferred pattern is to **start
+`maxima_raw_discovery_sensor`** in the Dagster UI. Each tick
+(hourly minimum) the sensor will:
+
+1. Fetch the partition index for `xrd_raw`, `xrf_raw`, and
+   `xrd_metadata`.
+2. Register any new `"<igsn>//<experiment_date>"` keys on the
+   `maxima_raw_run` dynamic dim.
+3. Emit one `RunRequest` per `(data_type, aimdl_key)`, dedupping
+   on a run_key that composes both the raw and `xrd_metadata`
+   content hashes — so unchanged partitions are silently
+   suppressed on subsequent ticks.
+
+On first enablement, expect hundreds of new partition keys in a
+single tick (bounded by the current AIMD-L partition count).
+Treat the first tick as a one-time catch-up event. Sensor runs
+inherit the job's default `dry_run=True`; flip `dry_run=False`
+in the sensor-launched runs only after a live MAXIMA raw rehearsal
+against a single partition has passed.
 
 ## Live sweep
 
@@ -83,9 +119,12 @@ The script:
 Watch the Dagster UI asset check panel:
 
 - `all_helix_alpss_tagged` must be green after
-  `provenance_tagged_items` materializes.
-- `maxima_prov_targets_resolve` must be green after
-  `provenance_tagged_items` materializes.
+  `helix_alpss_provenance_tagged` materializes.
+- `maxima_xrd_derived_provenance_valid` must be green after
+  `enriched_maxima_derived` materializes. It fails if any
+  xrd_derived item has a missing or dangling
+  `prov.wasDerivedFrom` — a data-hygiene signal about amdee_xrd
+  upstream, not a bug in this pipeline.
 - Per-partition enrichment success checks should be green.
 - `pdv_coverage_above_threshold` reflects the observer — not
   written to by the live sweep but useful cross-check.
@@ -115,5 +154,16 @@ is a Girder UI action — outside the scope of this runbook.
 2. Consider turning on `coord_enrichment_state_report_schedule`
    (nightly) once the manifest item and env vars are confirmed
    stable.
-3. Leave the three weekly sweep schedules STOPPED until a team
-   decision is made on cadence.
+3. Consider starting `maxima_raw_discovery_sensor`. On first
+   tick it will register every current AIMD-L `(data_type, run)`
+   pair and emit a RunRequest for each; all subsequent ticks
+   suppress unchanged partitions via the composed
+   raw+xrd_metadata content-hash dedup key.
+4. The weekly `coord_enrichment_maxima_raw_weekly_schedule` is
+   now gap-filling reconciliation — it enumerates the registered
+   partitions and emits RunRequests only for partitions with no
+   successful materialization. Still STOPPED by default, still
+   dry-run only. Enable once the sensor has been running long
+   enough to trust that gaps are real (not sensor-tick latency).
+5. Leave the HELIX ALPSS and MAXIMA derived weekly sweep
+   schedules STOPPED until a team decision is made on cadence.
