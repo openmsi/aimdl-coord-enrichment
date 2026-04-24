@@ -9,6 +9,7 @@ Two cadences:
 """
 
 from dagster import (
+    AssetKey,
     DefaultScheduleStatus,
     RunRequest,
     ScheduleEvaluationContext,
@@ -77,21 +78,65 @@ def coord_enrichment_state_report_schedule(
 def coord_enrichment_maxima_raw_weekly_schedule(
     context: ScheduleEvaluationContext,
 ):
-    """Weekly sweep across MAXIMA raw partitions (one run per partition).
+    """Weekly gap-filling reconciliation for MAXIMA raw partitions.
 
-    Shim for Step 2: iterates every known partition of the
-    MultiPartitionsDefinition (including dynamic run keys). Step 4
-    upgrades this to gap-filling semantics.
+    Enumerates all registered (data_type, run) partitions and emits
+    a dry-run RunRequest for each that has no successful
+    materialization. Partitions the discovery sensor already
+    processed successfully are skipped.
+
+    STOPPED by default; dry-run only. Safe to overlap with the
+    sensor — dry-run writes nothing.
     """
-    for key in MAXIMA_RAW_PARTITIONS.get_partition_keys(
-        dynamic_partitions_store=context.instance
-    ):
+    instance = context.instance
+
+    all_keys = MAXIMA_RAW_PARTITIONS.get_partition_keys(
+        dynamic_partitions_store=instance
+    )
+
+    asset_key = AssetKey("enriched_maxima_raw")
+    materialized = _materialized_partitions(instance, asset_key)
+
+    gap_keys = [k for k in all_keys if str(k) not in materialized]
+
+    context.log.info(
+        "maxima_raw reconciliation: %d known, %d materialized, %d gaps",
+        len(all_keys), len(materialized), len(gap_keys),
+    )
+
+    for key in gap_keys:
         yield RunRequest(
-            run_key=str(key),
+            run_key=f"reconciliation|{key}",
             partition_key=str(key),
             run_config=_dry_run_config(_MAXIMA_RAW_OPS),
-            tags={"phase5": "sweep", "partition": str(key), "dry_run": "true"},
+            tags={
+                "phase5": "reconciliation",
+                "partition": str(key),
+                "dry_run": "true",
+            },
         )
+
+
+def _materialized_partitions(instance, asset_key) -> set[str]:
+    """Return the set of partition-key strings with at least one
+    successful materialization for the given asset.
+
+    Uses whatever API the installed Dagster version exposes.
+    """
+    if hasattr(instance, "get_materialized_partitions"):
+        return set(instance.get_materialized_partitions(asset_key))
+
+    all_keys = MAXIMA_RAW_PARTITIONS.get_partition_keys(
+        dynamic_partitions_store=instance
+    )
+    out: set[str] = set()
+    for key in all_keys:
+        evt = instance.get_latest_materialization_event(
+            asset_key, partition=str(key)
+        )
+        if evt is not None:
+            out.add(str(key))
+    return out
 
 
 @schedule(

@@ -1,6 +1,13 @@
 """Tests for coord_enrichment schedules (Phase 5, Step 2)."""
 
-from dagster import DagsterInstance, DefaultScheduleStatus, build_schedule_context
+from dagster import (
+    AssetKey,
+    AssetMaterialization,
+    DagsterInstance,
+    DefaultScheduleStatus,
+    MultiPartitionKey,
+    build_schedule_context,
+)
 
 from helix_dagster import defs
 from helix_dagster.schedules import (
@@ -106,3 +113,43 @@ def test_sweep_run_requests_tag_dry_run_true(tmp_path):
     ]:
         for req in sched(context):
             assert req.tags["dry_run"] == "true", f"{sched.name} partition {req.partition_key}"
+
+
+def test_maxima_raw_reconciliation_empty_instance(tmp_path):
+    """Zero known partitions → zero RunRequests."""
+    with DagsterInstance.local_temp(tempdir=str(tmp_path)) as instance:
+        ctx = build_schedule_context(instance=instance)
+        result = list(coord_enrichment_maxima_raw_weekly_schedule(ctx))
+    assert result == []
+
+
+def test_maxima_raw_reconciliation_all_gaps(tmp_path):
+    """Registered partitions, none materialized → RunRequest per partition."""
+    with DagsterInstance.local_temp(tempdir=str(tmp_path)) as instance:
+        instance.add_dynamic_partitions("maxima_raw_run", ["K1//T1", "K2//T2"])
+        ctx = build_schedule_context(instance=instance)
+        result = list(coord_enrichment_maxima_raw_weekly_schedule(ctx))
+    # 2 run keys × 2 data_types = 4 partitions, all gaps
+    assert len(result) == 4
+    assert all(rr.tags.get("dry_run") == "true" for rr in result)
+    assert all(rr.tags.get("phase5") == "reconciliation" for rr in result)
+
+
+def test_maxima_raw_reconciliation_partial_gaps(tmp_path):
+    """Some materialized, some not → only the gaps."""
+    with DagsterInstance.local_temp(tempdir=str(tmp_path)) as instance:
+        instance.add_dynamic_partitions("maxima_raw_run", ["K1//T1"])
+        materialized_key = MultiPartitionKey(
+            {"data_type": "xrd_raw", "run": "K1//T1"}
+        )
+        instance.report_runless_asset_event(
+            AssetMaterialization(
+                asset_key=AssetKey("enriched_maxima_raw"),
+                partition=str(materialized_key),
+            )
+        )
+        ctx = build_schedule_context(instance=instance)
+        result = list(coord_enrichment_maxima_raw_weekly_schedule(ctx))
+    # Only the xrf_raw × K1//T1 partition remains a gap
+    assert len(result) == 1
+    assert "xrf_raw" in str(result[0].partition_key)
