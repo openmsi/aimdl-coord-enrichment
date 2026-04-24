@@ -35,6 +35,7 @@ from helix_dagster.coord_enrichment import (
     helix_alpss_provenance_tagged,
     helix_pdv_coverage_observer,
     inventory_nonempty_per_instrument,
+    maxima_xrd_derived_provenance_valid,
     no_coord_transform_failures_helix_alpss,
     no_coord_transform_failures_maxima_derived,
     no_coord_transform_failures_maxima_raw,
@@ -145,6 +146,7 @@ defs = Definitions(
         no_coord_transform_failures_helix_alpss,
         enrichment_success_rate_maxima_derived,
         no_coord_transform_failures_maxima_derived,
+        maxima_xrd_derived_provenance_valid,
         pdv_coverage_above_threshold,
     ],
     jobs=[

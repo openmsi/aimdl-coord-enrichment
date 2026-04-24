@@ -11,6 +11,7 @@ from helix_dagster.coord_enrichment.config_snapshot import CoordTransformSnapsho
 from helix_dagster.coord_enrichment.maxima_derived_leaf import (
     enriched_maxima_derived,
     enrichment_success_rate_maxima_derived,
+    maxima_xrd_derived_provenance_valid,
     no_coord_transform_failures_maxima_derived,
 )
 
@@ -261,3 +262,41 @@ def test_no_coord_transform_failures_check_fails():
     ctx = build_asset_context()
     check_result = no_coord_transform_failures_maxima_derived(ctx, result)
     assert check_result.passed is False
+
+
+# ---- Lineage + provenance_valid tests ----
+
+
+def test_enriched_maxima_derived_depends_on_raw():
+    """Step 6 lineage rewiring: derived depends on raw."""
+    from dagster import AssetKey
+
+    assert AssetKey(["enriched_maxima_raw"]) in enriched_maxima_derived.dependency_keys
+
+
+def test_maxima_xrd_derived_provenance_valid_detects_missing_prov():
+    fake_derived_output = {
+        "resolution_errors": [
+            {
+                "item_id": "X1",
+                "name": "foo.tif",
+                "stage": "inherit_from_parent",
+                "error": "derived item X1 has no prov.wasDerivedFrom or prov.isPartOf",
+            },
+            {
+                "item_id": "X2",
+                "name": "bar.tif",
+                "stage": "experiment_date",
+                "error": "item X2 missing meta.experiment_date",
+            },
+        ],
+    }
+    result = maxima_xrd_derived_provenance_valid(None, fake_derived_output)
+    assert result.passed is False
+    assert result.metadata["unresolved_count"].value == 1
+
+
+def test_maxima_xrd_derived_provenance_valid_passes_on_clean():
+    fake_derived_output = {"resolution_errors": []}
+    result = maxima_xrd_derived_provenance_valid(None, fake_derived_output)
+    assert result.passed is True

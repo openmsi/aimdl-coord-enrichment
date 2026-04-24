@@ -48,10 +48,10 @@ and parent-not-found errors surface.
 - Add a new asset check `maxima_xrd_derived_provenance_valid` on
   `enriched_maxima_derived` that flags items failing at
   `stage="inherit_from_parent"`.
-- Update `coord_enrichment_maxima_derived_job` to include
-  `enriched_maxima_raw` in its selection (so the job's runs
-  materialize the lineage properly).
 - Register the new check in Definitions.
+
+`coord_enrichment_maxima_derived_job` is **not** modified. See the
+note under Section 3 below.
 
 ## Edits
 
@@ -178,21 +178,36 @@ defs = Definitions(
 )
 ```
 
-Update `coord_enrichment_maxima_derived_job` to include
-`enriched_maxima_raw` — the DAG topology now requires raw to be
-materialized before derived can run:
+**`coord_enrichment_maxima_derived_job` stays unchanged.** Do NOT
+add `enriched_maxima_raw` to its selection. Rationale:
 
-```python
-coord_enrichment_maxima_derived_job = define_asset_job(
-    name="coord_enrichment_maxima_derived_job",
-    selection=AssetSelection.assets(
-        coord_transform_config_snapshot,
-        enrichable_items_inventory,
-        enriched_maxima_raw,       # new — upstream dep
-        enriched_maxima_derived,
-    ),
-)
-```
+`AssetSelection.assets(...)` requires uniform partition defs across
+the selected assets. After Step 2, `enriched_maxima_raw` is
+MultiPartitioned (`data_type × maxima_raw_run`) while
+`enriched_maxima_derived` remains `StaticPartitionsDefinition(["MAXIMA/xrd_derived"])`
+(decision α). Co-selecting them fails at Definitions load time with
+`DagsterInvalidDefinitionError: Selected assets must have the same
+partitions definitions`.
+
+This is actually the correct design, not just a constraint. The
+new DAG has two distinct materialization responsibilities:
+
+- **`enriched_maxima_raw` is materialized continuously** by
+  `maxima_raw_discovery_sensor` as partitions are discovered, and
+  by `coord_enrichment_maxima_raw_weekly_schedule` for gap filling.
+  Raw is kept current by the sensor/schedule, not by the derived
+  job.
+- **`coord_enrichment_maxima_derived_job` runs derived only,**
+  consuming whatever raw state currently exists. Having it
+  re-materialize all ~300 raw partitions on every invocation
+  would re-introduce the fan-out Step 2 was designed to eliminate.
+
+The asset-level `AssetDep(enriched_maxima_raw,
+partition_mapping=AllPartitionMapping())` is what Dagster consults
+for lineage, staleness reasoning, and the asset catalog UI — it
+does not require co-selection in a job. Cross-partition-def
+lineage expressed via `AssetDep` + materialization by separate
+jobs is the standard Dagster pattern for this shape.
 
 ### 4. `tests/test_coord_enrichment_maxima_derived.py`
 
@@ -287,8 +302,9 @@ git commit -m "Provenance split part 2: lineage dep + new check (#23)
 - Add maxima_xrd_derived_provenance_valid asset check on
   enriched_maxima_derived, replacing the deleted
   maxima_prov_targets_resolve.
-- Update coord_enrichment_maxima_derived_job selection to include
-  enriched_maxima_raw."
+- coord_enrichment_maxima_derived_job is intentionally unchanged;
+  cross-partition-def co-selection is unsupported and would re-
+  introduce the fan-out Step 2 eliminated."
 ```
 
 ## Success criteria
@@ -296,8 +312,8 @@ git commit -m "Provenance split part 2: lineage dep + new check (#23)
 - `enriched_maxima_derived` has `deps=[AssetDep("enriched_maxima_raw", partition_mapping=AllPartitionMapping())]`.
 - `maxima_xrd_derived_provenance_valid` exists as an asset check
   on `enriched_maxima_derived` and is registered in Definitions.
-- `coord_enrichment_maxima_derived_job` selection includes
-  `enriched_maxima_raw`.
+- `coord_enrichment_maxima_derived_job` selection is unchanged
+  from its Step-5 state.
 - Zero remaining references to `provenance_tagged_items` or
   `maxima_prov_targets_resolve` in the codebase.
 - Full `pytest` passes.

@@ -10,8 +10,10 @@ coord_provenance with station_coord_source.kind == "inherited".
 from typing import Any
 
 from dagster import (
+    AllPartitionMapping,
     AssetCheckResult,
     AssetCheckSeverity,
+    AssetDep,
     AssetExecutionContext,
     MetadataValue,
     StaticPartitionsDefinition,
@@ -40,6 +42,12 @@ MAXIMA_DERIVED_PARTITIONS = StaticPartitionsDefinition(
 
 @asset(
     partitions_def=MAXIMA_DERIVED_PARTITIONS,
+    deps=[
+        AssetDep(
+            "enriched_maxima_raw",
+            partition_mapping=AllPartitionMapping(),
+        ),
+    ],
 )
 def enriched_maxima_derived(
     context: AssetExecutionContext,
@@ -207,5 +215,43 @@ def no_coord_transform_failures_maxima_derived(context, enriched_maxima_derived)
         description=(
             "No coordinate transform failures."
             if passed else f"{failures} coordinate transform failure(s)."
+        ),
+    )
+
+
+@asset_check(asset="enriched_maxima_derived")
+def maxima_xrd_derived_provenance_valid(context, enriched_maxima_derived):
+    """ERROR if any xrd_derived item failed parent resolution.
+
+    Parent resolution for xrd_derived reads meta.prov.wasDerivedFrom
+    or meta.prov.isPartOf, written upstream by the amdee_xrd Girder
+    plugin, and looks the parent up in the inventory. Failures at
+    this stage indicate either a missing prov link on the item (a
+    data-hygiene problem in Girder) or a parent not present in the
+    current inventory slice (an ingest lag).
+
+    Both conditions should be zero in a healthy pipeline.
+    """
+    resolution_errors = enriched_maxima_derived.get("resolution_errors", [])
+    inherit_errors = [
+        e for e in resolution_errors
+        if e.get("stage") == "inherit_from_parent"
+    ]
+    passed = len(inherit_errors) == 0
+    examples = [
+        f"{e.get('item_id', '?')}: {e.get('error', '')}"
+        for e in inherit_errors[:3]
+    ]
+    return AssetCheckResult(
+        passed=passed,
+        severity=AssetCheckSeverity.ERROR,
+        metadata={
+            "unresolved_count": MetadataValue.int(len(inherit_errors)),
+            "examples": MetadataValue.text(", ".join(examples) or "none"),
+        },
+        description=(
+            "All xrd_derived items have valid prov links and resolvable parents."
+            if passed
+            else f"{len(inherit_errors)} xrd_derived item(s) failed parent resolution"
         ),
     )

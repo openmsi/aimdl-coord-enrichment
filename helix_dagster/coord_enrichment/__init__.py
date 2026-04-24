@@ -56,6 +56,7 @@ from helix_dagster.coord_enrichment.maxima_derived_leaf import (
     MAXIMA_DERIVED_PARTITIONS,
     enriched_maxima_derived,
     enrichment_success_rate_maxima_derived,
+    maxima_xrd_derived_provenance_valid,
     no_coord_transform_failures_maxima_derived,
 )
 from helix_dagster.coord_enrichment.pdv_observer import (
@@ -87,6 +88,7 @@ __all__ = [
     "MAXIMA_DERIVED_PARTITIONS",
     "enriched_maxima_derived",
     "enrichment_success_rate_maxima_derived",
+    "maxima_xrd_derived_provenance_valid",
     "no_coord_transform_failures_maxima_derived",
     "InheritedCoords",
     "inherit_from_parent",
