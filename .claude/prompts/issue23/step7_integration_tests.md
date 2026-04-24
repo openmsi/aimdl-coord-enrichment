@@ -40,9 +40,13 @@ selections. Steps 2, 5, and 6 changed:
 - `maxima_prov_targets_resolve` → `maxima_xrd_derived_provenance_valid`
   (now an asset check on derived, not on tagger)
 - `enriched_maxima_derived` → new lineage dep on
-  `enriched_maxima_raw`
-- Job selections for `coord_enrichment_maxima_raw_job` and
-  `coord_enrichment_maxima_derived_job`
+  `enriched_maxima_raw` (via `AssetDep` + `AllPartitionMapping`;
+  declared at the asset level, **not** added to the derived job's
+  selection — cross-partition-def co-selection is unsupported and
+  semantically wrong here)
+- `coord_enrichment_maxima_raw_job` slimmed (inventory + tagger
+  removed from selection in Step 2)
+- `coord_enrichment_maxima_derived_job` unchanged from pre-refactor
 - New job `coord_enrichment_maxima_raw_partition_job`
 - New sensor `maxima_raw_discovery_sensor`
 
@@ -64,8 +68,8 @@ all of them.
 ### 1. Inventory the xfail markers
 
 ```bash
-grep -rn "Step 7" tests/
-grep -rn "xfail" tests/ | grep -i "issue23\|step7\|topology"
+grep -rn "Step 7" tests/ --include="*.py"
+grep -rn "xfail" tests/ --include="*.py" | grep -i "issue23\|step7\|topology"
 ```
 
 Every hit is either (a) a test written with the old topology baked
@@ -120,12 +124,12 @@ If a test asserts "asset A depends on asset B" for some pair,
 update the expected edges. The new edges are:
 
 - `enriched_helix_alpss` → `helix_alpss_provenance_tagged` (was `provenance_tagged_items`)
-- `enriched_maxima_derived` → `enriched_maxima_raw` (new, via AllPartitionMapping)
+- `enriched_maxima_derived` → `enriched_maxima_raw` (new, via `AssetDep` + `AllPartitionMapping`)
 - `enriched_maxima_raw` has no asset deps (removed both inventory and tagger)
 
 ### 3. Reconcile `tests/test_coord_enrichment_phase4_e2e.py`
 
-Same categories as Step 2. Phase 4 tests exercise the HELIX ALPSS
+Same categories as Section 2. Phase 4 tests exercise the HELIX ALPSS
 and MAXIMA derived paths; they are most affected by the dep
 renames, less by the partition-shape change (unless they materialize
 the raw asset too).
@@ -150,19 +154,30 @@ update:
 - `enriched_helix_alpss.partitions_def` unchanged.
 - `enriched_maxima_derived.partitions_def` unchanged.
 
-If this file asserts job selections, update `coord_enrichment_maxima_raw_job`
-(slim) and `coord_enrichment_maxima_derived_job` (now includes raw).
-Also add assertions for `coord_enrichment_maxima_raw_partition_job`.
+If this file asserts job selections:
+
+- `coord_enrichment_maxima_raw_job`: slimmed to
+  `coord_transform_config_snapshot` + `enriched_maxima_raw` (done
+  in Step 2; any existing test assertion for this job may already
+  have been updated in that step).
+- `coord_enrichment_maxima_derived_job`: **unchanged** from its
+  pre-refactor shape. No update needed. Do not attempt to add
+  `enriched_maxima_raw` to its selection — Dagster rejects
+  cross-partition-def co-selection at load time.
+- `coord_enrichment_maxima_raw_partition_job`: new in Step 3;
+  add an assertion for its selection
+  (`coord_transform_config_snapshot` + `enriched_maxima_raw`) if
+  the file asserts job selections generally.
 
 ### 6. Any other test with Step 7 xfail or orphaned old-name reference
 
 Grep-sweep:
 
 ```bash
-grep -rn "provenance_tagged_items\|maxima_prov_targets_resolve" tests/
+grep -rn "provenance_tagged_items\|maxima_prov_targets_resolve" tests/ --include="*.py"
 # Expect zero results.
 
-grep -rn "Step 7\|xfail" tests/ | grep -i "issue23\|topology\|dag"
+grep -rn "Step 7\|xfail" tests/ --include="*.py" | grep -i "issue23\|topology\|dag"
 # Expect zero results after fixes.
 ```
 
