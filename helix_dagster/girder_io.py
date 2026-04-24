@@ -153,25 +153,56 @@ def fetch_all_aimdl_datafiles(client, data_type):
     return all_items
 
 
-def fetch_partition_keys(client, data_type):
+def fetch_partition_index(
+    client, data_type: str, since: str | None = None
+) -> dict[str, str]:
     """Return the partition index for a partition-aware data_type.
 
-    Calls ``GET /aimdl/partition?dataType=<data_type>`` and returns the
-    response dict, keyed by ``"<igsn>//<experiment_date>"`` with
-    payload-hash values. Used to enumerate all runs of a given data
-    type before fetching full-meta items per key.
+    Calls ``GET /aimdl/partition?dataType=<data_type>[&since=<since>]``
+    and returns the response dict, keyed by
+    ``"<igsn>//<experiment_date>"`` with content-hash values.
+
+    The ``since`` parameter is accepted for future incremental-
+    discovery use (e.g. sensor cursors). No caller in this codebase
+    wires it up today; pass None to get the full index.
+    """
+    parameters: dict[str, str] = {"dataType": data_type}
+    if since is not None:
+        parameters["since"] = since
+    return client.get("aimdl/partition", parameters=parameters)
+
+
+def fetch_partition_details(
+    client, data_type: str, key: str
+) -> list[dict]:
+    """Fetch items for one (data_type, partition-key) pair with full meta.
+
+    Calls ``GET /aimdl/partition/details?dataType=<data_type>&key=<key>``.
+    This is the scoped helper used by partition-bound assets. To
+    enumerate all partitions of a data_type, prefer
+    ``fetch_partition_index`` plus this per key, or the flattening
+    ``fetch_items_by_partition`` (inventory/reporting only).
+
+    ``key`` is the literal AIMD-L partition key — the string
+    ``"<igsn>//<experiment_date>"`` as emitted by the Girder plugin
+    and returned by ``fetch_partition_index``.
     """
     return client.get(
-        "aimdl/partition",
-        parameters={"dataType": data_type},
+        "aimdl/partition/details",
+        parameters={"dataType": data_type, "key": key},
     )
 
 
 def fetch_items_by_partition(client, data_type):
     """Fetch all items of a partition-aware data_type with FULL meta.
 
-    Calls ``/aimdl/partition`` once to enumerate keys, then
-    ``/aimdl/partition/details`` once per key. Returns a flat list of
+    Inventory/reporting helper only — flattens every partition of the
+    given data_type into a single list. Per-partition asset work
+    should use ``fetch_partition_index`` + ``fetch_partition_details``
+    directly so each partition stays scoped to its own run.
+
+    Calls ``fetch_partition_index`` once to enumerate keys, then
+    ``fetch_partition_details`` once per key. Returns a flat list of
     Girder item dicts with full meta (``experiment_date``, ``prov``,
     ``checksum``, etc.) preserved — unlike ``/aimdl/datafiles`` which
     strips meta down to ``data_type`` and ``igsn``.
@@ -190,13 +221,10 @@ def fetch_items_by_partition(client, data_type):
     list[dict]
         All items for the data_type with full meta.
     """
-    keys = fetch_partition_keys(client, data_type)
+    keys = fetch_partition_index(client, data_type)
     all_items = []
     for key in keys:
-        details = client.get(
-            "aimdl/partition/details",
-            parameters={"key": key, "dataType": data_type},
-        )
+        details = fetch_partition_details(client, data_type, key)
         if not details:
             continue
         all_items.extend(details)
