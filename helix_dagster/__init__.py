@@ -70,8 +70,6 @@ coord_enrichment_maxima_raw_job = define_asset_job(
     name="coord_enrichment_maxima_raw_job",
     selection=AssetSelection.assets(
         coord_transform_config_snapshot,
-        enrichable_items_inventory,
-        provenance_tagged_items,
         enriched_maxima_raw,
     ),
 )

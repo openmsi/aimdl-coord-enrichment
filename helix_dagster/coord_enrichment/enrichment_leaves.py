@@ -1,5 +1,14 @@
-"""Coordinate enrichment leaves. Phase 3 delivers MAXIMA raw only."""
+"""Coordinate enrichment leaves.
 
+``enriched_maxima_raw`` is partitioned on
+``MultiPartitionsDefinition({data_type, run})`` where ``run`` is a
+dynamic dimension keyed on the AIMD-L partition string
+``"<igsn>//<experiment_date>"``. Each partition fetches its own
+items and the matching ``instructions.txt`` via the
+``/aimdl/partition/details`` endpoint.
+"""
+
+import io
 from typing import Any
 
 from dagster import (
@@ -12,14 +21,15 @@ from dagster import (
 )
 
 from helix_dagster import __version__ as PIPELINE_VERSION
-from helix_dagster.coord_enrichment.cache import InstructionsCache
 from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
 from helix_dagster.coord_enrichment.inventory import MAXIMA_RAW_PARTITIONS
 from helix_dagster.coord_enrichment.overwrite import should_write
 from helix_dagster.coordinates import transform_station_to_sample
+from helix_dagster.girder_io import fetch_partition_details
 from helix_dagster.instruments import INSTRUMENT_MAXIMA
 from helix_dagster.instruments.maxima import (
     _experiment_date,
+    parse_instructions_json,
     parse_scan_point_index,
     scan_point_coords,
 )
@@ -28,30 +38,130 @@ from helix_dagster.provenance import build_coord_provenance
 from helix_dagster.resources import GirderConnection
 
 
+def _fetch_instructions_for_run(
+    girder: GirderConnection,
+    aimdl_key: str,
+    context: AssetExecutionContext,
+) -> tuple[dict | None, dict | None, list[dict]]:
+    """Fetch and parse the instructions.txt for a single AIMD-L run.
+
+    Calls the scoped partition-details endpoint for xrd_metadata
+    keyed by ``aimdl_key``, filters to instructions.txt items,
+    downloads and parses the first one.
+
+    Returns ``(instr_item, parsed, errors)``:
+      - ``instr_item``: the Girder item dict for the instructions.txt
+        used, or ``None`` if none was found or parseable.
+      - ``parsed``: the parsed JSON dict, or ``None`` on failure.
+      - ``errors``: list of per-run error dicts (empty on happy path).
+
+    If multiple ``instructions.txt`` items are present for the same
+    run, the first is used and the rest are recorded as warnings in
+    ``errors``.
+    """
+    errors: list[dict] = []
+    metadata_items = fetch_partition_details(girder, "xrd_metadata", aimdl_key)
+    instr_items = [
+        it for it in metadata_items if it.get("name") == "instructions.txt"
+    ]
+    if len(instr_items) == 0:
+        errors.append(
+            {
+                "stage": "instructions_missing",
+                "error": f"no instructions.txt in xrd_metadata for {aimdl_key}",
+            }
+        )
+        return None, None, errors
+
+    instr_item = instr_items[0]
+    if len(instr_items) > 1:
+        for extra in instr_items[1:]:
+            errors.append(
+                {
+                    "stage": "instructions_duplicate",
+                    "error": (
+                        f"multiple instructions.txt for {aimdl_key}; "
+                        f"using {instr_item.get('_id')}, ignoring {extra.get('_id')}"
+                    ),
+                }
+            )
+
+    try:
+        files = girder.get(f"item/{instr_item['_id']}/files")
+    except Exception as exc:
+        errors.append(
+            {
+                "stage": "instructions_fetch",
+                "error": f"failed to list files for {instr_item.get('_id')}: {exc}",
+            }
+        )
+        return None, None, errors
+    if not files:
+        errors.append(
+            {
+                "stage": "instructions_fetch",
+                "error": f"instructions.txt item {instr_item.get('_id')} has no files",
+            }
+        )
+        return None, None, errors
+
+    buf = io.BytesIO()
+    try:
+        girder.downloadFile(files[0]["_id"], buf)
+    except Exception as exc:
+        errors.append(
+            {
+                "stage": "instructions_fetch",
+                "error": f"failed to download {instr_item.get('_id')}: {exc}",
+            }
+        )
+        return None, None, errors
+    buf.seek(0)
+
+    try:
+        parsed = parse_instructions_json(buf.read())
+    except ResolutionError as exc:
+        errors.append(
+            {
+                "stage": "instructions_parse",
+                "error": str(exc),
+            }
+        )
+        return instr_item, None, errors
+
+    return instr_item, parsed, errors
+
+
 @asset(
     partitions_def=MAXIMA_RAW_PARTITIONS,
-    deps=["provenance_tagged_items"],
 )
 def enriched_maxima_raw(
     context: AssetExecutionContext,
     config: CoordEnrichmentConfig,
-    enrichable_items_inventory: dict[str, list[dict[str, Any]]],
     coord_transform_config_snapshot,
     girder: GirderConnection,
 ) -> dict[str, Any]:
     """Write Sample_X/Y and coord_provenance to MAXIMA xrd_raw or xrf_raw items.
 
-    Partitioned by "MAXIMA/xrd_raw" and "MAXIMA/xrf_raw". Each
-    partition run processes only its subset of the inventory.
+    Partitioned on ``MultiPartitionsDefinition({data_type, run})``.
+    Each partition fetches its own items and the matching
+    ``instructions.txt`` via the ``/aimdl/partition/details``
+    endpoint, keyed on ``aimdl_key = "<igsn>//<experiment_date>"``.
     """
-    partition_key = context.partition_key
-    items = enrichable_items_inventory.get(partition_key, [])
+    keys = context.partition_key.keys_by_dimension
+    data_type = keys["data_type"]
+    aimdl_key = keys["run"]
+    partition_key_str = str(context.partition_key)
+
+    items = fetch_partition_details(girder, data_type, aimdl_key)
     context.log.info(
-        "enriched_maxima_raw partition %s: %d items to consider",
-        partition_key, len(items),
+        "enriched_maxima_raw (%s, %s): %d items to consider",
+        data_type, aimdl_key, len(items),
     )
 
-    cache = InstructionsCache()
+    instr_item, parsed, instructions_errors = _fetch_instructions_for_run(
+        girder, aimdl_key, context,
+    )
 
     try:
         run_id = context.run.run_id
@@ -70,15 +180,23 @@ def enriched_maxima_raw(
     resolution_errors: list[dict[str, Any]] = []
     version_counter: dict[str, int] = {}
 
+    instructions_missing_error = (
+        instructions_errors[0]["error"] if instr_item is None or parsed is None
+        else None
+    )
+
     for item in items:
         item_id = item.get("_id")
         name = item.get("name", "")
 
-        try:
-            run_folder_id, instr_item, parsed = cache.get_for_item(item, girder)
-        except ResolutionError as exc:
+        if instructions_missing_error is not None:
             resolution_errors.append(
-                {"item_id": item_id, "name": name, "stage": "run_folder_or_instructions", "error": str(exc)}
+                {
+                    "item_id": item_id,
+                    "name": name,
+                    "stage": "instructions",
+                    "error": instructions_missing_error,
+                }
             )
             counts["resolution_errors"] += 1
             continue
@@ -163,14 +281,16 @@ def enriched_maxima_raw(
 
     context.add_output_metadata(
         {
-            "partition": MetadataValue.text(partition_key),
+            "partition": MetadataValue.text(partition_key_str),
+            "data_type": MetadataValue.text(data_type),
+            "aimdl_key": MetadataValue.text(aimdl_key),
             "seen": MetadataValue.int(counts["seen"]),
             "written": MetadataValue.int(counts["written"]),
             "simulated_dry_run": MetadataValue.int(counts["simulated_dry_run"]),
             "skipped_no_change": MetadataValue.int(counts["skipped_no_change"]),
             "coord_failures": MetadataValue.int(counts["coord_failures"]),
             "resolution_errors": MetadataValue.int(counts["resolution_errors"]),
-            "cache_size": MetadataValue.int(cache.cache_size()),
+            "instructions_errors": MetadataValue.int(len(instructions_errors)),
             "transform_versions_used": MetadataValue.text(
                 ", ".join(f"{k}={v}" for k, v in sorted(version_counter.items()))
                 or "none"
@@ -179,10 +299,13 @@ def enriched_maxima_raw(
     )
 
     return {
-        "partition_key": partition_key,
+        "partition_key": partition_key_str,
+        "data_type": data_type,
+        "aimdl_key": aimdl_key,
         "counts": counts,
         "write_errors": write_errors,
         "resolution_errors": resolution_errors,
+        "instructions_errors": instructions_errors,
         "version_counter": version_counter,
         "dry_run": config.dry_run,
     }

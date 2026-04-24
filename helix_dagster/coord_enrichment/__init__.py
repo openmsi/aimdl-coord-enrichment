@@ -25,7 +25,9 @@ from helix_dagster.coord_enrichment.config_snapshot import (
     coord_transform_config_snapshot,
 )
 from helix_dagster.coord_enrichment.inventory import (
+    MAXIMA_RAW_DATA_TYPE_PARTITIONS,
     MAXIMA_RAW_PARTITIONS,
+    MAXIMA_RUN_PARTITIONS,
     enrichable_items_inventory,
     filter_to_raw_subfolder,
     inventory_nonempty_per_instrument,
@@ -68,7 +70,9 @@ from helix_dagster.coord_enrichment.manifest import coord_enrichment_manifest
 __all__ = [
     "CoordEnrichmentConfig",
     "coord_transform_config_snapshot",
+    "MAXIMA_RAW_DATA_TYPE_PARTITIONS",
     "MAXIMA_RAW_PARTITIONS",
+    "MAXIMA_RUN_PARTITIONS",
     "enrichable_items_inventory",
     "filter_to_raw_subfolder",
     "inventory_nonempty_per_instrument",

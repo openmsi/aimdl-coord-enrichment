@@ -1,6 +1,6 @@
 """Tests for coord_enrichment schedules (Phase 5, Step 2)."""
 
-from dagster import DefaultScheduleStatus, build_schedule_context
+from dagster import DagsterInstance, DefaultScheduleStatus, build_schedule_context
 
 from helix_dagster import defs
 from helix_dagster.schedules import (
@@ -56,10 +56,14 @@ def test_state_report_runconfig_is_dry_run():
     assert result.run_config["ops"]["coord_enrichment_manifest"]["config"]["dry_run"] is True
 
 
-def test_maxima_raw_emits_two_run_requests():
-    context = build_schedule_context()
-    requests = list(coord_enrichment_maxima_raw_weekly_schedule(context))
-    assert len(requests) == 2
+def test_maxima_raw_emits_no_requests_when_no_dynamic_keys(tmp_path):
+    # MAXIMA_RAW_PARTITIONS is now a MultiPartitionsDefinition whose
+    # `run` dimension is dynamic. A fresh instance has no registered
+    # run keys, so the cartesian product is empty.
+    with DagsterInstance.local_temp(tempdir=str(tmp_path)) as instance:
+        context = build_schedule_context(instance=instance)
+        requests = list(coord_enrichment_maxima_raw_weekly_schedule(context))
+    assert len(requests) == 0
 
 
 def test_helix_alpss_emits_three_run_requests():
@@ -78,7 +82,6 @@ def test_sweep_run_requests_include_partition_key():
     context = build_schedule_context()
 
     for sched, expected_keys in [
-        (coord_enrichment_maxima_raw_weekly_schedule, {"MAXIMA/xrd_raw", "MAXIMA/xrf_raw"}),
         (
             coord_enrichment_helix_alpss_weekly_schedule,
             {"HELIX/pdv_alpss_output", "HELIX/pdv_alpss_result", "HELIX/pdv_alpss_results"},
@@ -90,10 +93,14 @@ def test_sweep_run_requests_include_partition_key():
         assert actual_keys == expected_keys, f"{sched.name}: {actual_keys} != {expected_keys}"
 
 
-def test_sweep_run_requests_tag_dry_run_true():
+def test_sweep_run_requests_tag_dry_run_true(tmp_path):
+    with DagsterInstance.local_temp(tempdir=str(tmp_path)) as instance:
+        raw_context = build_schedule_context(instance=instance)
+        for req in coord_enrichment_maxima_raw_weekly_schedule(raw_context):
+            assert req.tags["dry_run"] == "true"
+
     context = build_schedule_context()
     for sched in [
-        coord_enrichment_maxima_raw_weekly_schedule,
         coord_enrichment_helix_alpss_weekly_schedule,
         coord_enrichment_maxima_derived_weekly_schedule,
     ]:

@@ -1,7 +1,7 @@
 """Tests for the three partitioned coord-enrichment sibling jobs."""
 
 import pytest
-from dagster import AssetKey
+from dagster import AssetKey, DagsterInstance, MultiPartitionsDefinition
 
 from helix_dagster import defs
 
@@ -13,7 +13,11 @@ PARTITIONED_JOB_NAMES = [
     "coord_enrichment_maxima_derived_job",
 ]
 
-UNPARTITIONED_UPSTREAMS = {
+MAXIMA_RAW_UNPARTITIONED_UPSTREAMS = {
+    AssetKey("coord_transform_config_snapshot"),
+}
+
+PROV_BACKED_UNPARTITIONED_UPSTREAMS = {
     AssetKey("coord_transform_config_snapshot"),
     AssetKey("enrichable_items_inventory"),
     AssetKey("provenance_tagged_items"),
@@ -25,12 +29,17 @@ def test_all_three_partitioned_jobs_registered():
         assert name in REPO.job_names, f"{name} not found in defs"
 
 
-def test_maxima_raw_job_partition_keys():
+def test_maxima_raw_job_uses_multipartitions_def():
     job = REPO.get_job("coord_enrichment_maxima_raw_job")
-    assert job.partitions_def.get_partition_keys() == [
-        "MAXIMA/xrd_raw",
-        "MAXIMA/xrf_raw",
-    ]
+    assert isinstance(job.partitions_def, MultiPartitionsDefinition)
+    dim_names = {d.name for d in job.partitions_def.partitions_defs}
+    assert dim_names == {"data_type", "run"}
+    # Dynamic `run` dim starts empty; only the static data_type axis
+    # contributes keys.
+    with DagsterInstance.ephemeral() as instance:
+        assert job.partitions_def.get_partition_keys(
+            dynamic_partitions_store=instance
+        ) == []
 
 
 def test_helix_alpss_job_partition_keys():
@@ -49,12 +58,25 @@ def test_maxima_derived_job_partition_keys():
     ]
 
 
-@pytest.mark.parametrize("job_name", PARTITIONED_JOB_NAMES)
-def test_each_job_includes_unpartitioned_upstreams(job_name):
+def test_maxima_raw_job_selection():
+    job = REPO.get_job("coord_enrichment_maxima_raw_job")
+    asset_keys = job.asset_layer.executable_asset_keys
+    assert asset_keys == {
+        AssetKey("coord_transform_config_snapshot"),
+        AssetKey("enriched_maxima_raw"),
+    }
+
+
+@pytest.mark.parametrize(
+    "job_name",
+    ["coord_enrichment_helix_alpss_job", "coord_enrichment_maxima_derived_job"],
+)
+def test_prov_backed_jobs_include_unpartitioned_upstreams(job_name):
     job = REPO.get_job(job_name)
     asset_keys = job.asset_layer.executable_asset_keys
-    assert UNPARTITIONED_UPSTREAMS.issubset(asset_keys), (
-        f"{job_name} missing upstreams: {UNPARTITIONED_UPSTREAMS - asset_keys}"
+    assert PROV_BACKED_UNPARTITIONED_UPSTREAMS.issubset(asset_keys), (
+        f"{job_name} missing upstreams: "
+        f"{PROV_BACKED_UNPARTITIONED_UPSTREAMS - asset_keys}"
     )
 
 

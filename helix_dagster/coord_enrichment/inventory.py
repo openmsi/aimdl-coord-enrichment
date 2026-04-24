@@ -7,7 +7,9 @@ from dagster import (
     AssetCheckResult,
     AssetCheckSeverity,
     AssetExecutionContext,
+    DynamicPartitionsDefinition,
     MetadataValue,
+    MultiPartitionsDefinition,
     StaticPartitionsDefinition,
     asset,
     asset_check,
@@ -33,8 +35,19 @@ PARTITION_AWARE_DATA_TYPES = frozenset(
     {"xrd_raw", "xrf_raw", "xrd_derived", "xrd_metadata"}
 )
 
-MAXIMA_RAW_PARTITIONS = StaticPartitionsDefinition(
-    ["MAXIMA/xrd_raw", "MAXIMA/xrf_raw"]
+MAXIMA_RAW_DATA_TYPE_PARTITIONS = StaticPartitionsDefinition(
+    ["xrd_raw", "xrf_raw"]
+)
+
+MAXIMA_RUN_PARTITIONS = DynamicPartitionsDefinition(
+    name="maxima_raw_run"
+)
+
+MAXIMA_RAW_PARTITIONS = MultiPartitionsDefinition(
+    {
+        "data_type": MAXIMA_RAW_DATA_TYPE_PARTITIONS,
+        "run": MAXIMA_RUN_PARTITIONS,
+    }
 )
 
 

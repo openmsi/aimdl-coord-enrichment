@@ -39,7 +39,6 @@ _STATE_REPORT_OPS = [
     "coord_enrichment_manifest",
 ]
 _MAXIMA_RAW_OPS = [
-    "provenance_tagged_items",
     "enriched_maxima_raw",
 ]
 _HELIX_ALPSS_OPS = [
@@ -78,13 +77,20 @@ def coord_enrichment_state_report_schedule(
 def coord_enrichment_maxima_raw_weekly_schedule(
     context: ScheduleEvaluationContext,
 ):
-    """Weekly sweep across MAXIMA raw partitions (one run per partition)."""
-    for key in MAXIMA_RAW_PARTITIONS.get_partition_keys():
+    """Weekly sweep across MAXIMA raw partitions (one run per partition).
+
+    Shim for Step 2: iterates every known partition of the
+    MultiPartitionsDefinition (including dynamic run keys). Step 4
+    upgrades this to gap-filling semantics.
+    """
+    for key in MAXIMA_RAW_PARTITIONS.get_partition_keys(
+        dynamic_partitions_store=context.instance
+    ):
         yield RunRequest(
-            run_key=key,
-            partition_key=key,
+            run_key=str(key),
+            partition_key=str(key),
             run_config=_dry_run_config(_MAXIMA_RAW_OPS),
-            tags={"phase5": "sweep", "partition": key, "dry_run": "true"},
+            tags={"phase5": "sweep", "partition": str(key), "dry_run": "true"},
         )
 
 
