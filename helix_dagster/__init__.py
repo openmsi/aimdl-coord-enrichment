@@ -51,7 +51,10 @@ from helix_dagster.schedules import (
     coord_enrichment_maxima_raw_weekly_schedule,
     coord_enrichment_state_report_schedule,
 )
-from helix_dagster.sensors import helix_folder_sensor
+from helix_dagster.sensors import (
+    helix_folder_sensor,
+    maxima_raw_discovery_sensor,
+)
 
 
 coord_enrichment_job = define_asset_job(
@@ -68,6 +71,14 @@ coord_enrichment_job = define_asset_job(
 
 coord_enrichment_maxima_raw_job = define_asset_job(
     name="coord_enrichment_maxima_raw_job",
+    selection=AssetSelection.assets(
+        coord_transform_config_snapshot,
+        enriched_maxima_raw,
+    ),
+)
+
+coord_enrichment_maxima_raw_partition_job = define_asset_job(
+    name="coord_enrichment_maxima_raw_partition_job",
     selection=AssetSelection.assets(
         coord_transform_config_snapshot,
         enriched_maxima_raw,
@@ -143,6 +154,7 @@ defs = Definitions(
         process_helix_assets_job,
         coord_enrichment_job,
         coord_enrichment_maxima_raw_job,
+        coord_enrichment_maxima_raw_partition_job,
         coord_enrichment_helix_alpss_job,
         coord_enrichment_maxima_derived_job,
     ],
@@ -152,7 +164,10 @@ defs = Definitions(
         coord_enrichment_helix_alpss_weekly_schedule,
         coord_enrichment_maxima_derived_weekly_schedule,
     ],
-    sensors=[helix_folder_sensor],
+    sensors=[
+        helix_folder_sensor,
+        maxima_raw_discovery_sensor,
+    ],
     resources={
         "girder": GirderConnection(
             credentials=GirderCredentials(
