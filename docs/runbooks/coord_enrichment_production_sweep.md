@@ -99,20 +99,131 @@ against a single partition has passed.
 
 ## Live sweep
 
-Once the dry rehearsal is green, run the one-shot live sweep
-script:
+Once the dry rehearsal is green, perform the live sweep through the
+Dagster UI. There is no shell-driven entry point — the previous
+`operations/run_live_sweep.sh` had drift defects from issue-23 and
+was retired (see `docs/archive/run_live_sweep/`). The schedules in
+`helix_dagster/schedules.py` already cover automated sweeps; this
+section covers the one-shot interactive sweep an operator drives by
+hand.
 
+### Order of operations
+
+The three sibling jobs must run in this order — derived leaves
+inherit from parent items written by raw leaves and by the
+spreadsheet DAG:
+
+1. **MAXIMA raw first.** Writes `Station_X/Y`, `Sample_X/Y`, and
+   `coord_provenance` on `xrd_raw` and `xrf_raw` items.
+2. **HELIX ALPSS and MAXIMA derived second**, in either order
+   relative to each other. Both inherit from already-enriched
+   parents (PDV traces and `xrd_raw` master.h5 respectively).
+
+### Operator confirmation discipline
+
+Before clicking Launch on any job with `dry_run: false`:
+
+1. Re-confirm the deployment's env vars point at the intended Girder
+   instance and `COORD_ENRICHMENT_MANIFEST_ITEM`.
+2. Confirm verbally with at least one other team member, or pause
+   long enough to read back the job name, the partition selection,
+   and `dry_run: false` to yourself before clicking.
+3. The launchpad shows the full run config preview before submission.
+   Read it.
+
+This is the protocol that lived in the retired bash script's "Type
+LIVE SWEEP to proceed" gate. Without an automated tool, the discipline
+moves to the operator.
+
+### Step 1 — MAXIMA raw
+
+Open the Dagster UI launchpad for `coord_enrichment_maxima_raw_job`.
+
+The job's partitions are
+`MultiPartitionsDefinition({data_type, run})`, where the `run` dim is
+dynamic and populated by `maxima_raw_discovery_sensor`. Choices:
+
+- **For a small, targeted sweep** (recommended for the first live
+  sweep): pick one or a few `(data_type, run)` partitions in the UI's
+  partition selector. Provide run config:
+
+  ```yaml
+  ops:
+    enriched_maxima_raw:
+      config:
+        dry_run: false
+  ```
+
+  Click Launch. Repeat for each desired partition.
+
+- **For a full sweep across every registered partition** (recommended
+  only after the targeted sweep above has verified end-to-end against
+  production): instead of the launchpad, **set
+  `coord_enrichment_maxima_raw_weekly_schedule` to STARTED with
+  `dry_run: false` in its run config**. The schedule is gap-filling
+  reconciliation — it enumerates registered partitions and fires only
+  for partitions without a successful materialization. This is what
+  the retired bash script tried to do, but the schedule does it
+  correctly.
+
+  After one cycle has run to completion, set the schedule back to
+  STOPPED. Live writes are not for ongoing automation; the schedule's
+  default `dry_run: true` setting should be the steady state.
+
+Wait for all MAXIMA raw runs to complete before moving on. Both
+inherited-leaf jobs depend on these results being on the items.
+
+### Step 2 — HELIX ALPSS
+
+Open the launchpad for `coord_enrichment_helix_alpss_job`. Three
+static partitions:
+
+- `HELIX/pdv_alpss_output`
+- `HELIX/pdv_alpss_result`
+- `HELIX/pdv_alpss_results`
+
+Either select all three at once or run them one at a time. Run config:
+
+```yaml
+ops:
+  helix_alpss_provenance_tagged:
+    config:
+      dry_run: false
+  enriched_helix_alpss:
+    config:
+      dry_run: false
 ```
-bash operations/run_live_sweep.sh
+
+Click Launch.
+
+### Step 3 — MAXIMA derived
+
+Open the launchpad for `coord_enrichment_maxima_derived_job`. Single
+static partition `MAXIMA/xrd_derived`. Run config:
+
+```yaml
+ops:
+  enriched_maxima_derived:
+    config:
+      dry_run: false
 ```
 
-The script:
+Click Launch.
 
-1. Re-runs the pre-flight check
-2. Confirms with the operator that env vars point at production
-3. Invokes each partitioned job per partition key with
-   `dry_run=False`
-4. Writes a launch log to `operations/log/sweep-<timestamp>.log`
+### Audit trail
+
+Every run's full result — asset materializations, asset check
+outcomes, output metadata, error logs — lives on the run's page in
+the Dagster UI under Runs. That is the authoritative record. The
+retired script wrote a parallel `operations/log/sweep-*.log`; the
+Dagster run history replaces it.
+
+The `coord_enrichment_manifest` asset writes a summary record to
+`COORD_ENRICHMENT_MANIFEST_ITEM` in Girder via
+`meta.coord_enrichment_status`, recording timestamp, run id, pipeline
+version, dry-run state, and the per-leaf state report. Confirm this
+write completed by inspecting the manifest item in the Girder UI
+after each sweep.
 
 ## Monitoring the sweep
 
