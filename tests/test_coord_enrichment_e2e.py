@@ -11,7 +11,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from dagster import MultiPartitionKey, build_asset_context
+from dagster import (
+    AssetKey,
+    AssetMaterialization,
+    DagsterInstance,
+    MetadataValue,
+    MultiPartitionKey,
+    build_asset_context,
+)
 
 from helix_dagster.coordinates import _COORD_TRANSFORMER
 from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
@@ -97,6 +104,42 @@ def girder_mock():
     return mock
 
 
+def _report_maxima_raw_event(instance, partition_key, data_type, aimdl_key, result):
+    """Persist a runless materialization for one enriched_maxima_raw partition.
+
+    The report asset rebuilds per-partition state by reading these
+    events back; the keys must match what
+    enriched_maxima_raw.add_output_metadata writes.
+    """
+    counts = result["counts"]
+    instance.report_runless_asset_event(
+        AssetMaterialization(
+            asset_key=AssetKey("enriched_maxima_raw"),
+            partition=str(partition_key),
+            metadata={
+                "partition": MetadataValue.text(str(partition_key)),
+                "data_type": MetadataValue.text(data_type),
+                "aimdl_key": MetadataValue.text(aimdl_key),
+                "seen": MetadataValue.int(counts["seen"]),
+                "written": MetadataValue.int(counts["written"]),
+                "simulated_dry_run": MetadataValue.int(counts["simulated_dry_run"]),
+                "skipped_no_change": MetadataValue.int(counts["skipped_no_change"]),
+                "coord_failures": MetadataValue.int(counts["coord_failures"]),
+                "resolution_errors": MetadataValue.int(counts["resolution_errors"]),
+                "instructions_errors": MetadataValue.int(
+                    len(result["instructions_errors"])
+                ),
+                "transform_versions_used": MetadataValue.text(
+                    ", ".join(
+                        f"{k}={v}" for k, v in
+                        sorted(result["version_counter"].items())
+                    ) or "none"
+                ),
+            },
+        )
+    )
+
+
 def _run_full_dag(xrd_items, xrf_items, girder_mock):
     """Run the full coord_enrichment DAG manually in dependency order."""
     instr_item = {"_id": "instr-abc", "name": "instructions.txt"}
@@ -119,71 +162,76 @@ def _run_full_dag(xrd_items, xrf_items, girder_mock):
         manifest_tracking_item_id=TRACKING_ITEM_ID,
     )
 
-    tagging_ctx = build_asset_context()
-    with patch(
-        "helix_dagster.coord_enrichment.provenance_tagging.fetch_all_aimdl_datafiles",
-        return_value=[],
-    ):
-        tagging_result = helix_alpss_provenance_tagged(
-            tagging_ctx, config_live, inventory, girder_mock,
-        )
+    with DagsterInstance.ephemeral() as instance:
+        # The dynamic dim must know about AIMDL_KEY before the report
+        # tries to enumerate maxima_raw partition keys.
+        instance.add_dynamic_partitions("maxima_raw_run", [AIMDL_KEY])
 
-    # enriched_maxima_raw now fetches its own items via fetch_partition_details,
-    # keyed per partition on (data_type, aimdl_key).
-    fetch_mapping = {
-        ("xrd_raw", AIMDL_KEY): xrd_items,
-        ("xrf_raw", AIMDL_KEY): xrf_items,
-        ("xrd_metadata", AIMDL_KEY): [instr_item],
-    }
-
-    def _fake_fetch(girder, data_type, key):
-        return list(fetch_mapping.get((data_type, key), []))
-
-    partition_results = {}
-    for data_type in ["xrd_raw", "xrf_raw"]:
-        partition_key = MultiPartitionKey(
-            {"data_type": data_type, "run": AIMDL_KEY}
-        )
-        ctx = build_asset_context(partition_key=partition_key)
+        tagging_ctx = build_asset_context(instance=instance)
         with patch(
-            "helix_dagster.coord_enrichment.enrichment_leaves.fetch_partition_details",
-            side_effect=_fake_fetch,
-        ), patch(
-            "helix_dagster.coord_enrichment.enrichment_leaves.transform_station_to_sample",
-            side_effect=_mock_transform,
+            "helix_dagster.coord_enrichment.provenance_tagging.fetch_all_aimdl_datafiles",
+            return_value=[],
         ):
-            partition_results[data_type] = enriched_maxima_raw(
-                ctx, config_live, snap, girder_mock,
+            tagging_result = helix_alpss_provenance_tagged(
+                tagging_ctx, config_live, inventory, girder_mock,
             )
 
-    observer_ctx = build_asset_context()
-    with patch(
-        "helix_dagster.coord_enrichment.pdv_observer.fetch_all_aimdl_datafiles",
-        return_value=[],
-    ):
-        observer_result = helix_pdv_coverage_observer(observer_ctx, girder_mock)
+        fetch_mapping = {
+            ("xrd_raw", AIMDL_KEY): xrd_items,
+            ("xrf_raw", AIMDL_KEY): xrf_items,
+            ("xrd_metadata", AIMDL_KEY): [instr_item],
+        }
 
-    report_ctx = build_asset_context()
-    xrd_report = coord_enrichment_report(
-        report_ctx,
-        partition_results["xrd_raw"],
-        {},  # enriched_helix_alpss — not exercised in this e2e
-        {},  # enriched_maxima_derived — not exercised in this e2e
-        tagging_result,
-        observer_result,
-    )
+        def _fake_fetch(girder, data_type, key):
+            return list(fetch_mapping.get((data_type, key), []))
 
-    manifest_ctx = build_asset_context()
-    manifest_result = coord_enrichment_manifest(
-        manifest_ctx, config_live, xrd_report, girder_mock,
-    )
+        partition_results = {}
+        for data_type in ["xrd_raw", "xrf_raw"]:
+            partition_key = MultiPartitionKey(
+                {"data_type": data_type, "run": AIMDL_KEY}
+            )
+            ctx = build_asset_context(
+                partition_key=partition_key, instance=instance,
+            )
+            with patch(
+                "helix_dagster.coord_enrichment.enrichment_leaves.fetch_partition_details",
+                side_effect=_fake_fetch,
+            ), patch(
+                "helix_dagster.coord_enrichment.enrichment_leaves.transform_station_to_sample",
+                side_effect=_mock_transform,
+            ):
+                leaf_result = enriched_maxima_raw(
+                    ctx, config_live, snap, girder_mock,
+                )
+                partition_results[data_type] = leaf_result
+
+            _report_maxima_raw_event(
+                instance, partition_key, data_type, AIMDL_KEY, leaf_result,
+            )
+
+        observer_ctx = build_asset_context(instance=instance)
+        with patch(
+            "helix_dagster.coord_enrichment.pdv_observer.fetch_all_aimdl_datafiles",
+            return_value=[],
+        ):
+            observer_result = helix_pdv_coverage_observer(observer_ctx, girder_mock)
+
+        report_ctx = build_asset_context(instance=instance)
+        xrd_report = coord_enrichment_report(
+            report_ctx, tagging_result, observer_result,
+        )
+
+        manifest_ctx = build_asset_context(instance=instance)
+        manifest_result = coord_enrichment_manifest(
+            manifest_ctx, config_live, xrd_report, girder_mock,
+        )
 
     return partition_results, tagging_result, xrd_report, manifest_result
 
 
 def test_e2e_50_enrichment_writes_plus_manifest(xrd_items, xrf_items, girder_mock):
     """Full DAG: 25 xrd_raw + 25 xrf_raw = 50 enrichment writes + 1 manifest."""
-    partition_results, _, _, manifest_result = _run_full_dag(
+    partition_results, _, report, manifest_result = _run_full_dag(
         xrd_items, xrf_items, girder_mock,
     )
 
@@ -204,6 +252,13 @@ def test_e2e_50_enrichment_writes_plus_manifest(xrd_items, xrf_items, girder_moc
     assert len(enrichment_calls) == 50
     assert len(manifest_calls) == 1
     assert manifest_calls[0][0][0] == TRACKING_ITEM_ID
+
+    # Report sees the two materialized maxima_raw partitions and counts
+    # the helix/derived leaves as unmaterialized (no events reported).
+    assert report["summary"]["leaf_partitions_covered"] == 2
+    assert report["leaves_unmaterialized"]["enriched_helix_alpss"] == 3
+    assert report["leaves_unmaterialized"]["enriched_maxima_derived"] == 1
+    assert report["leaves_unmaterialized"]["enriched_maxima_raw"] == 0
 
 
 def test_e2e_provenance_payload_shape(xrd_items, xrf_items, girder_mock):

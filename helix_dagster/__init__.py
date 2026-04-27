@@ -5,6 +5,7 @@ from dagster import AssetSelection, Definitions, EnvVar, define_asset_job
 from helix_dagster.assets import (
     alpss_results_inventory,
     enriched_pdv_metadata,
+    experiment_log_source,
     pdv_cross_references,
     pdv_trace_inventory,
     process_helix_assets_job,
@@ -108,6 +109,7 @@ coord_enrichment_maxima_derived_job = define_asset_job(
 defs = Definitions(
     assets=[
         # existing
+        experiment_log_source,
         raw_experiment_log,
         pdv_trace_inventory,
         validated_rows,

@@ -108,7 +108,11 @@ def maxima_raw_discovery_sensor(
     )
 
 
-@sensor(job=process_helix_assets_job, minimum_interval_seconds=3600)
+@sensor(
+    job=process_helix_assets_job,
+    minimum_interval_seconds=3600,
+    default_status=DefaultSensorStatus.STOPPED,
+)
 def helix_folder_sensor(context: SensorEvaluationContext, girder: GirderConnection):
     """Poll for new experiment log spreadsheets in the HELIX folder.
 
@@ -142,7 +146,7 @@ def helix_folder_sensor(context: SensorEvaluationContext, girder: GirderConnecti
                     run_key=item_id,
                     run_config={
                         "ops": {
-                            "raw_experiment_log": {
+                            "experiment_log_source": {
                                 "config": {
                                     "item_id": item_id,
                                     "filename": item["name"],

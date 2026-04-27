@@ -31,19 +31,44 @@ class ExperimentLogConfig(Config):
 
 
 @asset
-def raw_experiment_log(
+def experiment_log_source(
     context: AssetExecutionContext,
     config: ExperimentLogConfig,
+) -> dict:
+    """Emit the spreadsheet source descriptor for this run.
+
+    This asset is the single Config-bearing entry point for the
+    spreadsheet DAG. Downstream assets that need the source item id
+    or filename consume this value rather than each declaring their
+    own ExperimentLogConfig. Keeps the sensor's RunRequest small and
+    keeps source identity a first-class value in the asset graph.
+    """
+    source = {"item_id": config.item_id, "filename": config.filename}
+    context.add_output_metadata(
+        {
+            "item_id": MetadataValue.text(config.item_id),
+            "filename": MetadataValue.text(config.filename),
+        }
+    )
+    return source
+
+
+@asset
+def raw_experiment_log(
+    context: AssetExecutionContext,
+    experiment_log_source: dict,
     girder: GirderConnection,
 ) -> pd.DataFrame:
     """Download a spreadsheet from Girder and apply COLUMN_MAP rename."""
-    df = download_and_read(girder, config.item_id, config.filename)
+    item_id = experiment_log_source["item_id"]
+    filename = experiment_log_source["filename"]
+    df = download_and_read(girder, item_id, filename)
     df = df.rename(columns=COLUMN_MAP)
     context.add_output_metadata(
         {
             "row_count": MetadataValue.int(len(df)),
-            "filename": MetadataValue.text(config.filename),
-            "source_item_id": MetadataValue.text(config.item_id),
+            "filename": MetadataValue.text(filename),
+            "source_item_id": MetadataValue.text(item_id),
         }
     )
     return df
@@ -168,7 +193,7 @@ def pdv_cross_references(
 @asset
 def enriched_pdv_metadata(
     context: AssetExecutionContext,
-    config: ExperimentLogConfig,
+    experiment_log_source: dict,
     pdv_cross_references: dict,
     validated_rows: dict,
     girder: GirderConnection,
@@ -254,7 +279,7 @@ def enriched_pdv_metadata(
             source_timestamp_origin=ts_origin,
             station_coord_source={
                 "kind": "helix_experiment_log",
-                "spreadsheet_item_id": config.item_id,
+                "spreadsheet_item_id": experiment_log_source["item_id"],
                 "spreadsheet_row_index": int(row_idx),
                 "spreadsheet_pdv_filename": row.get("PDV_FileName"),
             },
@@ -404,7 +429,7 @@ def quality_report(
 @asset
 def processing_manifest(
     context: AssetExecutionContext,
-    config: ExperimentLogConfig,
+    experiment_log_source: dict,
     quality_report: dict,
     validated_rows: dict,
     pdv_cross_references: dict,
@@ -418,6 +443,7 @@ def processing_manifest(
     - Idempotency: sensor can check before triggering reruns
     - Cross-system visibility: Girder UI shows processing status
     """
+    item_id = experiment_log_source["item_id"]
     df = validated_rows["dataframe"]
     total_rows = len(df)
     valid_igsn_count = int(df["valid_igsn"].notna().sum())
@@ -461,16 +487,16 @@ def processing_manifest(
 
     # Write to the source spreadsheet's Girder item
     try:
-        girder.addMetadataToItem(config.item_id, {"processing_status": manifest})
+        girder.addMetadataToItem(item_id, {"processing_status": manifest})
         context.log.info(
             "Wrote processing manifest to Girder item %s: status=%s",
-            config.item_id,
+            item_id,
             status,
         )
     except Exception as exc:
         context.log.error(
             "Failed to write processing manifest to Girder item %s: %s",
-            config.item_id,
+            item_id,
             exc,
         )
         manifest["write_failed"] = True
@@ -480,7 +506,7 @@ def processing_manifest(
         "total_rows": MetadataValue.int(total_rows),
         "rows_enriched": MetadataValue.int(written_count),
         "has_issues": MetadataValue.bool(has_issues),
-        "source_item_id": MetadataValue.text(config.item_id),
+        "source_item_id": MetadataValue.text(item_id),
     })
 
     return manifest
@@ -489,6 +515,7 @@ def processing_manifest(
 process_helix_assets_job = define_asset_job(
     name="process_helix_assets_job",
     selection=AssetSelection.assets(
+        experiment_log_source,
         raw_experiment_log,
         pdv_trace_inventory,
         validated_rows,
