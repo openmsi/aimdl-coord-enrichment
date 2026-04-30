@@ -300,3 +300,76 @@ def test_maxima_xrd_derived_provenance_valid_passes_on_clean():
     fake_derived_output = {"resolution_errors": []}
     result = maxima_xrd_derived_provenance_valid(None, fake_derived_output)
     assert result.passed is True
+
+
+# ---- Step 1 precondition tests ----
+
+
+def test_fast_fails_when_no_parents_enriched():
+    unenriched_parents = [
+        _parent(item_id=f"p{i}", station_x=None, include_prov=False)
+        for i in range(3)
+    ]
+    inventory = {
+        PARTITION_KEY: [_derived_item()],
+        "MAXIMA/xrd_raw": unenriched_parents,
+    }
+    girder = MagicMock()
+    config = CoordEnrichmentConfig(dry_run=True)
+    snap = _snapshot()
+    ctx = build_asset_context(partition_key=PARTITION_KEY)
+
+    with pytest.raises(Exception) as excinfo:
+        enriched_maxima_derived(ctx, config, inventory, snap, girder)
+
+    msg = str(excinfo.value)
+    assert "0/3" in msg
+    assert "enriched_maxima_raw" in msg
+
+
+def test_warns_when_some_parents_unenriched():
+    raw_items = [
+        _parent(item_id="p_ok", station_x=11.0, include_prov=True),
+        _parent(item_id="p_bad", station_x=None, include_prov=False),
+    ]
+    inventory = {
+        PARTITION_KEY: [],
+        "MAXIMA/xrd_raw": raw_items,
+    }
+    girder = MagicMock()
+    config = CoordEnrichmentConfig(dry_run=True)
+    snap = _snapshot()
+    ctx = build_asset_context(partition_key=PARTITION_KEY)
+
+    warning_spy = MagicMock()
+    ctx.log.warning = warning_spy
+
+    result = enriched_maxima_derived(ctx, config, inventory, snap, girder)
+
+    warning_spy.assert_called()
+    fmt = warning_spy.call_args[0][0]
+    assert "partial" in fmt.lower() or "parents enriched" in fmt
+    assert result["counts"]["seen"] == 0
+
+
+def test_emits_parent_count_metadata():
+    raw_items = [
+        _parent(item_id="p_ok", station_x=11.0, include_prov=True),
+        _parent(item_id="p_bad", station_x=None, include_prov=False),
+    ]
+    inventory = {
+        PARTITION_KEY: [],
+        "MAXIMA/xrd_raw": raw_items,
+    }
+    girder = MagicMock()
+    config = CoordEnrichmentConfig(dry_run=True)
+    snap = _snapshot()
+    ctx = build_asset_context(partition_key=PARTITION_KEY)
+    ctx.add_output_metadata = MagicMock()
+
+    enriched_maxima_derived(ctx, config, inventory, snap, girder)
+
+    ctx.add_output_metadata.assert_called_once()
+    metadata = ctx.add_output_metadata.call_args[0][0]
+    assert metadata["parents_total"].value == 2
+    assert metadata["parents_enriched"].value == 1
