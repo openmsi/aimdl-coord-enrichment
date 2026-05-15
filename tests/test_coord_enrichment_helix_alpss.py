@@ -8,11 +8,29 @@ from dagster import build_asset_context
 
 from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
 from helix_dagster.coord_enrichment.config_snapshot import CoordTransformSnapshot
-from helix_dagster.coord_enrichment.helix_alpss_leaf import (
-    enriched_helix_alpss,
-    enrichment_success_rate_helix_alpss,
-    no_coord_transform_failures_helix_alpss,
+from helix_dagster.coord_enrichment.check_support import (
+    evaluate_coord_failures,
+    evaluate_success_rate,
 )
+from helix_dagster.coord_enrichment.helix_alpss_leaf import enriched_helix_alpss
+
+
+def _success_rate(result):
+    """Apply the success-rate decision to a leaf-return dict.
+
+    The @asset_check wrapper reads these same numbers from the event
+    log; this exercises the pure decision logic directly.
+    """
+    c = result["counts"]
+    return evaluate_success_rate(
+        seen=c["seen"],
+        written=c["written"],
+        simulated_dry_run=c["simulated_dry_run"],
+        skipped_no_change=c["skipped_no_change"],
+        resolution_errors=c["resolution_errors"],
+        write_errors_count=len(result.get("write_errors", [])),
+        partition_label=result["partition_key"],
+    )
 
 EXAMPLE_TS = datetime(2026, 2, 18, 18, 45, 56, tzinfo=timezone.utc)
 
@@ -284,33 +302,25 @@ def test_coord_failure_counted():
 def test_enrichment_success_rate_check_passes():
     item = _alpss_item()
     result, _ = _run_asset([item], dry_run=False)
-    ctx = build_asset_context()
-    check_result = enrichment_success_rate_helix_alpss(ctx, result)
-    assert check_result.passed is True
+    assert _success_rate(result).passed is True
 
 
 def test_enrichment_success_rate_check_fails_on_all_errors():
     parent = _parent(station_x=None)
     item = _alpss_item()
     result, _ = _run_asset([item], dry_run=False, parent=parent)
-    ctx = build_asset_context()
-    check_result = enrichment_success_rate_helix_alpss(ctx, result)
-    assert check_result.passed is False
+    assert _success_rate(result).passed is False
 
 
 def test_enrichment_success_rate_check_empty_partition():
     result, _ = _run_asset([], dry_run=False)
-    ctx = build_asset_context()
-    check_result = enrichment_success_rate_helix_alpss(ctx, result)
-    assert check_result.passed is True
+    assert _success_rate(result).passed is True
 
 
 def test_no_coord_transform_failures_check_passes():
     item = _alpss_item()
     result, _ = _run_asset([item], dry_run=False)
-    ctx = build_asset_context()
-    check_result = no_coord_transform_failures_helix_alpss(ctx, result)
-    assert check_result.passed is True
+    assert evaluate_coord_failures(result["counts"]["coord_failures"]).passed is True
 
 
 def test_no_coord_transform_failures_check_fails():
@@ -319,6 +329,4 @@ def test_no_coord_transform_failures_check_fails():
 
     item = _alpss_item()
     result, _ = _run_asset([item], dry_run=False, transform_fn=fail_transform)
-    ctx = build_asset_context()
-    check_result = no_coord_transform_failures_helix_alpss(ctx, result)
-    assert check_result.passed is False
+    assert evaluate_coord_failures(result["counts"]["coord_failures"]).passed is False
