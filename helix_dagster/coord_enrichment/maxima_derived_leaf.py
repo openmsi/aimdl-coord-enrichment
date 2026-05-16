@@ -65,6 +65,34 @@ def enriched_maxima_derived(
     """Enrich MAXIMA xrd_derived items by inheriting coords from their parent xrd_raw."""
     partition_key = context.partition_key
     items = enrichable_items_inventory.get(partition_key, [])
+
+    raw_items = enrichable_items_inventory.get("MAXIMA/xrd_raw", [])
+    parents_total = len(raw_items)
+    parents_enriched = sum(
+        1 for it in raw_items
+        if (it.get("meta") or {}).get("Station_X") is not None
+        and isinstance((it.get("meta") or {}).get("coord_provenance"), dict)
+    )
+
+    if parents_total == 0:
+        context.log.info(
+            "enriched_maxima_derived: no xrd_raw items in inventory to inherit from"
+        )
+    elif parents_enriched == 0 and len(items) > 0:
+        msg = (
+            f"All MAXIMA xrd_raw parents are unenriched (0/{parents_total}). "
+            "Run enriched_maxima_raw before enriched_maxima_derived. See "
+            "coord_enrichment_maxima_raw_job and the raw discovery sensor."
+        )
+        context.log.error(msg)
+        raise Exception(msg)
+    elif parents_enriched < parents_total:
+        context.log.warning(
+            "enriched_maxima_derived: partial xrd_raw enrichment "
+            "(%d/%d parents enriched); continuing.",
+            parents_enriched, parents_total,
+        )
+
     context.log.info(
         "enriched_maxima_derived partition %s: %d items to consider",
         partition_key, len(items),
@@ -175,6 +203,8 @@ def enriched_maxima_derived(
             "write_errors": MetadataValue.int(len(write_errors)),
             "inherit_from_parent_errors": MetadataValue.int(len(inherit_errors)),
             "inherit_from_parent_examples": MetadataValue.text(inherit_examples),
+            "parents_total": MetadataValue.int(parents_total),
+            "parents_enriched": MetadataValue.int(parents_enriched),
             "transform_versions_used": MetadataValue.text(
                 ", ".join(f"{k}={v}" for k, v in sorted(version_counter.items()))
                 or "none"
