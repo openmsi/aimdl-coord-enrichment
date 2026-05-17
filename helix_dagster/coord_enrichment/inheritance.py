@@ -1,9 +1,10 @@
 """Parent-inheritance helper for Phase 4 derived-item leaves.
 
 Given a derived Girder item that has `meta.prov.wasDerivedFrom`
-set by `provenance_tagged_items`, fetch the parent and return
-everything the enrichment leaf needs to produce a fresh
-coord_provenance for the derived item.
+set (by `helix_alpss_provenance_tagged` for HELIX ALPSS items, or
+by the upstream amdee_xrd Girder plugin for MAXIMA xrd_derived),
+fetch the parent and return everything the enrichment leaf needs
+to produce a fresh coord_provenance for the derived item.
 
 This module is Dagster-adjacent (called from inside asset
 bodies), so it avoids PEP 563 deferred annotations.

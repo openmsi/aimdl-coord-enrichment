@@ -1,4 +1,4 @@
-"""Tests for provenance_tagged_items asset and checks."""
+"""Tests for helix_alpss_provenance_tagged asset and check."""
 
 from unittest.mock import MagicMock
 
@@ -8,8 +8,7 @@ from dagster import AssetCheckSeverity, build_asset_context
 from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
 from helix_dagster.coord_enrichment.provenance_tagging import (
     all_helix_alpss_tagged,
-    maxima_prov_targets_resolve,
-    provenance_tagged_items,
+    helix_alpss_provenance_tagged,
 )
 
 
@@ -24,27 +23,17 @@ def _make_pdv_trace(item_id, name, *, igsn="JHAMAC00003-S1R4C3"):
     return {"_id": item_id, "name": name, "meta": {"data_type": "pdv_trace", "igsn": igsn}}
 
 
-def _make_xrd_derived(item_id, name, *, igsn="JHAMAB00019-12", prov=None):
-    meta = {"data_type": "xrd_derived", "igsn": igsn}
-    if prov is not None:
-        meta["prov"] = prov
-    return {"_id": item_id, "name": name, "meta": meta}
-
-
 def _empty_inventory():
-    """Inventory with all partition keys but empty lists."""
+    """Inventory with all HELIX partition keys but empty lists."""
     return {
         "HELIX/pdv_alpss_output": [],
         "HELIX/pdv_alpss_result": [],
         "HELIX/pdv_alpss_results": [],
-        "MAXIMA/xrd_derived": [],
-        "MAXIMA/xrd_raw": [],
-        "MAXIMA/xrf_raw": [],
     }
 
 
 def _run_asset(inventory, girder, *, dry_run=False, pdv_traces=None, monkeypatch=None):
-    """Helper to run provenance_tagged_items with mocks."""
+    """Helper to run helix_alpss_provenance_tagged with mocks."""
     if pdv_traces is not None and monkeypatch is not None:
         monkeypatch.setattr(
             "helix_dagster.coord_enrichment.provenance_tagging.fetch_all_aimdl_datafiles",
@@ -52,7 +41,7 @@ def _run_asset(inventory, girder, *, dry_run=False, pdv_traces=None, monkeypatch
         )
     config = CoordEnrichmentConfig(dry_run=dry_run)
     ctx = build_asset_context()
-    return provenance_tagged_items(ctx, config, inventory, girder)
+    return helix_alpss_provenance_tagged(ctx, config, inventory, girder)
 
 
 # --- Test 1: HELIX ALPSS missing prov gets written ---
@@ -122,54 +111,7 @@ def test_helix_alpss_no_parent_recorded_as_unresolved():
     assert result["unresolved"][0]["item_id"] == "alpss1"
 
 
-# --- Test 4: MAXIMA dangling prov overwritten ---
-
-def test_maxima_xrd_derived_dangling_prov_overwritten(monkeypatch):
-    xrd = _make_xrd_derived(
-        "xrd1", "scan_point_0_scan.png",
-        prov={"wasDerivedFrom": "DANGLING", "wasGeneratedBy": "amdee_xrd-0.1.4"},
-    )
-    inv = _empty_inventory()
-    inv["MAXIMA/xrd_derived"] = [xrd]
-
-    monkeypatch.setattr(
-        "helix_dagster.instruments.maxima.heal_maxima_derived_parent",
-        lambda item, girder: "master_h5_id",
-    )
-    girder = MagicMock()
-    result = _run_asset(inv, girder, dry_run=False)
-
-    girder.addMetadataToItem.assert_called_once_with(
-        "xrd1",
-        {"prov": {"wasDerivedFrom": "master_h5_id", "wasGeneratedBy": "amdee_xrd-0.1.4"}},
-    )
-    assert result["counters"]["MAXIMA/xrd_derived"]["overwritten"] == 1
-
-
-# --- Test 5: prov merge preserves other keys ---
-
-def test_maxima_prov_preserves_other_keys(monkeypatch):
-    xrd = _make_xrd_derived(
-        "xrd1", "scan_point_0_scan.png",
-        prov={"wasDerivedFrom": "OLD", "wasGeneratedBy": "amdee_xrd-0.1.4"},
-    )
-    inv = _empty_inventory()
-    inv["MAXIMA/xrd_derived"] = [xrd]
-
-    monkeypatch.setattr(
-        "helix_dagster.instruments.maxima.heal_maxima_derived_parent",
-        lambda item, girder: "NEW_PARENT",
-    )
-    girder = MagicMock()
-    result = _run_asset(inv, girder, dry_run=False)
-
-    call_args = girder.addMetadataToItem.call_args
-    written_prov = call_args[0][1]["prov"]
-    assert written_prov["wasDerivedFrom"] == "NEW_PARENT"
-    assert written_prov["wasGeneratedBy"] == "amdee_xrd-0.1.4"
-
-
-# --- Test 6: dry_run does not call Girder ---
+# --- Test 4: dry_run does not call Girder ---
 
 def test_dry_run_does_not_call_girder():
     alpss = _make_alpss_item(
@@ -193,7 +135,7 @@ def test_dry_run_does_not_call_girder():
     assert result["write_ops"][0]["simulated"] is True
 
 
-# --- Test 7: adapter exception → unresolved, no crash ---
+# --- Test 5: adapter exception → unresolved, no crash ---
 
 def test_unresolved_adapter_exception_does_not_crash_asset(monkeypatch):
     alpss = _make_alpss_item(
@@ -216,7 +158,7 @@ def test_unresolved_adapter_exception_does_not_crash_asset(monkeypatch):
     assert len(result["unresolved"]) == 1
 
 
-# --- Test 8: check passes when no unresolved ---
+# --- Test 6: check passes when no unresolved ---
 
 def test_check_all_helix_alpss_tagged_passes_when_empty_unresolved():
     ctx = build_asset_context()
@@ -225,7 +167,7 @@ def test_check_all_helix_alpss_tagged_passes_when_empty_unresolved():
     assert check_result.passed is True
 
 
-# --- Test 9: check errors on HELIX unresolved ---
+# --- Test 7: check errors on HELIX unresolved ---
 
 def test_check_all_helix_alpss_tagged_errors_on_helix_unresolved():
     ctx = build_asset_context()
@@ -242,23 +184,7 @@ def test_check_all_helix_alpss_tagged_errors_on_helix_unresolved():
     assert check_result.severity == AssetCheckSeverity.ERROR
 
 
-# --- Test 10: MAXIMA check ignores HELIX unresolved ---
-
-def test_check_maxima_prov_targets_resolve_ignores_helix_unresolved():
-    ctx = build_asset_context()
-    prov_result = {
-        "unresolved": [
-            {"partition": "HELIX/pdv_alpss_output", "item_id": "a1", "name": "foo.png"},
-        ],
-        "counters": {},
-        "write_ops": [],
-        "dry_run": False,
-    }
-    check_result = maxima_prov_targets_resolve(ctx, prov_result)
-    assert check_result.passed is True
-
-
-# --- Test 11: fetches pdv_trace when inventory lacks key ---
+# --- Test 8: fetches pdv_trace when inventory lacks key ---
 
 def test_fetches_pdv_trace_when_inventory_lacks_key(monkeypatch):
     alpss = _make_alpss_item(

@@ -1,8 +1,11 @@
-"""provenance_tagged_items asset.
+"""helix_alpss_provenance_tagged asset.
 
-Tags `meta.prov.wasDerivedFrom` on derived items that either have
-no prov at all (HELIX ALPSS) or have a dangling
-`wasDerivedFrom` pointer (MAXIMA xrd_derived in test environments).
+Tags `meta.prov.wasDerivedFrom` on HELIX ALPSS items that either
+have no prov at all or an incorrect `wasDerivedFrom` pointer,
+resolving the parent PDV trace by filename.
+
+HELIX-only: the MAXIMA xrd_derived verification path moved to an
+asset check on `enriched_maxima_derived` in Step 6.
 """
 
 from typing import Any
@@ -21,8 +24,6 @@ from helix_dagster.girder_io import fetch_all_aimdl_datafiles
 from helix_dagster.instruments import (
     HELIX_DERIVED_DATA_TYPES,
     INSTRUMENT_HELIX,
-    INSTRUMENT_MAXIMA,
-    MAXIMA_DERIVED_DATA_TYPES,
     resolve_parent_item_id,
 )
 from helix_dagster.resources import GirderConnection
@@ -108,13 +109,13 @@ def _apply_decision(
 
 
 @asset
-def provenance_tagged_items(
+def helix_alpss_provenance_tagged(
     context: AssetExecutionContext,
     config: CoordEnrichmentConfig,
     enrichable_items_inventory: dict[str, list[dict[str, Any]]],
     girder: GirderConnection,
 ) -> dict[str, Any]:
-    """Tag prov.wasDerivedFrom on in-scope derived items.
+    """Tag prov.wasDerivedFrom on HELIX ALPSS derived items.
 
     Returns a structured result with per-partition counts, the set
     of items that remained unresolved, and a list of all write
@@ -163,32 +164,6 @@ def provenance_tagged_items(
                 dry_run=config.dry_run,
             )
 
-    for dt in sorted(MAXIMA_DERIVED_DATA_TYPES):
-        partition_key = f"{INSTRUMENT_MAXIMA}/{dt}"
-        items = enrichable_items_inventory.get(partition_key, [])
-        c = counters.setdefault(
-            partition_key,
-            {"already_correct": 0, "written": 0, "overwritten": 0,
-             "unresolvable": 0, "skipped_dry_run": 0},
-        )
-        for item in items:
-            stored = ((item.get("meta") or {}).get("prov") or {}).get("wasDerivedFrom")
-            try:
-                resolved = resolve_parent_item_id(item, girder=girder)
-            except Exception as exc:
-                context.log.error(
-                    "MAXIMA parent resolution crashed for item %s: %s",
-                    item.get("_id"), exc,
-                )
-                resolved = None
-            decision = _decide(stored, resolved)
-            _apply_decision(
-                context=context, item=item, stored=stored, resolved=resolved,
-                decision=decision, partition_key=partition_key, counters=c,
-                unresolved=unresolved, write_ops=write_ops, girder=girder,
-                dry_run=config.dry_run,
-            )
-
     context.add_output_metadata(
         {
             "total_unresolved": MetadataValue.int(len(unresolved)),
@@ -210,10 +185,10 @@ def provenance_tagged_items(
     }
 
 
-@asset_check(asset="provenance_tagged_items")
-def all_helix_alpss_tagged(context, provenance_tagged_items):
+@asset_check(asset="helix_alpss_provenance_tagged")
+def all_helix_alpss_tagged(context, helix_alpss_provenance_tagged):
     """ERROR if any HELIX ALPSS item has unresolved prov after the tagging pass."""
-    unresolved = provenance_tagged_items.get("unresolved", [])
+    unresolved = helix_alpss_provenance_tagged.get("unresolved", [])
     helix_unresolved = [
         u for u in unresolved if u["partition"].startswith(f"{INSTRUMENT_HELIX}/")
     ]
@@ -230,29 +205,5 @@ def all_helix_alpss_tagged(context, provenance_tagged_items):
             "All HELIX ALPSS items have resolvable parent PDV traces."
             if passed
             else f"{len(helix_unresolved)} HELIX ALPSS item(s) unresolved"
-        ),
-    )
-
-
-@asset_check(asset="provenance_tagged_items")
-def maxima_prov_targets_resolve(context, provenance_tagged_items):
-    """ERROR if any MAXIMA derived item's prov target cannot be resolved."""
-    unresolved = provenance_tagged_items.get("unresolved", [])
-    maxima_unresolved = [
-        u for u in unresolved if u["partition"].startswith(f"{INSTRUMENT_MAXIMA}/")
-    ]
-    passed = len(maxima_unresolved) == 0
-    examples = [f"{u['partition']}: {u['name']}" for u in maxima_unresolved[:3]]
-    return AssetCheckResult(
-        passed=passed,
-        severity=AssetCheckSeverity.ERROR,
-        metadata={
-            "unresolved_count": MetadataValue.int(len(maxima_unresolved)),
-            "examples": MetadataValue.text(", ".join(examples) or "none"),
-        },
-        description=(
-            "All MAXIMA derived items have resolvable master.h5 parents."
-            if passed
-            else f"{len(maxima_unresolved)} MAXIMA derived item(s) unresolved"
         ),
     )

@@ -2,16 +2,17 @@
 
 Partitioned across MAXIMA/xrd_derived. For each in-scope xrd_derived
 item, inherit coordinates from the parent xrd_raw master.h5 (whose
-prov was healed in provenance_tagged_items), re-apply the parent's
-recorded MAXIMA transform version, and write coord_provenance with
-station_coord_source.kind == "inherited".
+prov was written upstream by the amdee_xrd Girder plugin), re-apply
+the parent's recorded MAXIMA transform version, and write
+coord_provenance with station_coord_source.kind == "inherited".
 """
 
 from typing import Any
 
 from dagster import (
-    AssetCheckResult,
+    AllPartitionMapping,
     AssetCheckSeverity,
+    AssetDep,
     AssetExecutionContext,
     MetadataValue,
     StaticPartitionsDefinition,
@@ -20,6 +21,13 @@ from dagster import (
 )
 
 from helix_dagster import __version__ as PIPELINE_VERSION
+from helix_dagster.coord_enrichment.check_support import (
+    evaluate_coord_failures,
+    evaluate_provenance_valid,
+    evaluate_success_rate,
+    latest_partition_metadata,
+    no_materialization_result,
+)
 from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
 from helix_dagster.coord_enrichment.inheritance import (
     inherit_from_parent,
@@ -40,7 +48,12 @@ MAXIMA_DERIVED_PARTITIONS = StaticPartitionsDefinition(
 
 @asset(
     partitions_def=MAXIMA_DERIVED_PARTITIONS,
-    deps=["provenance_tagged_items"],
+    deps=[
+        AssetDep(
+            "enriched_maxima_raw",
+            partition_mapping=AllPartitionMapping(),
+        ),
+    ],
 )
 def enriched_maxima_derived(
     context: AssetExecutionContext,
@@ -52,6 +65,34 @@ def enriched_maxima_derived(
     """Enrich MAXIMA xrd_derived items by inheriting coords from their parent xrd_raw."""
     partition_key = context.partition_key
     items = enrichable_items_inventory.get(partition_key, [])
+
+    raw_items = enrichable_items_inventory.get("MAXIMA/xrd_raw", [])
+    parents_total = len(raw_items)
+    parents_enriched = sum(
+        1 for it in raw_items
+        if (it.get("meta") or {}).get("Station_X") is not None
+        and isinstance((it.get("meta") or {}).get("coord_provenance"), dict)
+    )
+
+    if parents_total == 0:
+        context.log.info(
+            "enriched_maxima_derived: no xrd_raw items in inventory to inherit from"
+        )
+    elif parents_enriched == 0 and len(items) > 0:
+        msg = (
+            f"All MAXIMA xrd_raw parents are unenriched (0/{parents_total}). "
+            "Run enriched_maxima_raw before enriched_maxima_derived. See "
+            "coord_enrichment_maxima_raw_job and the raw discovery sensor."
+        )
+        context.log.error(msg)
+        raise Exception(msg)
+    elif parents_enriched < parents_total:
+        context.log.warning(
+            "enriched_maxima_derived: partial xrd_raw enrichment "
+            "(%d/%d parents enriched); continuing.",
+            parents_enriched, parents_total,
+        )
+
     context.log.info(
         "enriched_maxima_derived partition %s: %d items to consider",
         partition_key, len(items),
@@ -141,6 +182,15 @@ def enriched_maxima_derived(
             )
             write_errors.append({"item_id": item_id, "error": str(exc)})
 
+    inherit_errors = [
+        e for e in resolution_errors
+        if e.get("stage") == "inherit_from_parent"
+    ]
+    inherit_examples = ", ".join(
+        f"{e.get('item_id', '?')}: {e.get('error', '')}"
+        for e in inherit_errors[:3]
+    ) or "none"
+
     context.add_output_metadata(
         {
             "partition": MetadataValue.text(partition_key),
@@ -150,6 +200,11 @@ def enriched_maxima_derived(
             "skipped_no_change": MetadataValue.int(counts["skipped_no_change"]),
             "coord_failures": MetadataValue.int(counts["coord_failures"]),
             "resolution_errors": MetadataValue.int(counts["resolution_errors"]),
+            "write_errors": MetadataValue.int(len(write_errors)),
+            "inherit_from_parent_errors": MetadataValue.int(len(inherit_errors)),
+            "inherit_from_parent_examples": MetadataValue.text(inherit_examples),
+            "parents_total": MetadataValue.int(parents_total),
+            "parents_enriched": MetadataValue.int(parents_enriched),
             "transform_versions_used": MetadataValue.text(
                 ", ".join(f"{k}={v}" for k, v in sorted(version_counter.items()))
                 or "none"
@@ -168,45 +223,62 @@ def enriched_maxima_derived(
 
 
 @asset_check(asset="enriched_maxima_derived")
-def enrichment_success_rate_maxima_derived(context, enriched_maxima_derived):
-    """WARN if <90% of items in this partition ended in a successful decision."""
-    c = enriched_maxima_derived["counts"]
-    write_errors = enriched_maxima_derived.get("write_errors", [])
-    total = c["seen"]
-    if total == 0:
-        return AssetCheckResult(
-            passed=True,
-            severity=AssetCheckSeverity.WARN,
-            metadata={"note": MetadataValue.text("partition empty")},
-            description="Partition empty; no items to check.",
-        )
-    success = c["written"] + c["simulated_dry_run"] + c["skipped_no_change"]
-    rate = success / total
-    passed = rate >= 0.9
-    return AssetCheckResult(
-        passed=passed,
-        severity=AssetCheckSeverity.WARN,
-        metadata={
-            "success_rate": MetadataValue.float(round(rate, 3)),
-            "write_errors": MetadataValue.int(len(write_errors)),
-            "resolution_errors": MetadataValue.int(c["resolution_errors"]),
-            "partition": MetadataValue.text(enriched_maxima_derived["partition_key"]),
-        },
-        description=f"Success rate: {rate:.1%} ({success}/{total})",
+def enrichment_success_rate_maxima_derived(context):
+    """WARN if <90% of items in this partition ended in a successful decision.
+
+    Reads partition materialization metadata from the event log (see
+    check_support module docstring) instead of taking the asset as an
+    input.
+    """
+    md = latest_partition_metadata(
+        context.instance, "enriched_maxima_derived", str(context.partition_key)
+    )
+    if md is None:
+        return no_materialization_result()
+    return evaluate_success_rate(
+        seen=int(md.get("seen", 0)),
+        written=int(md.get("written", 0)),
+        simulated_dry_run=int(md.get("simulated_dry_run", 0)),
+        skipped_no_change=int(md.get("skipped_no_change", 0)),
+        resolution_errors=int(md.get("resolution_errors", 0)),
+        write_errors_count=int(md.get("write_errors", 0)),
+        partition_label=str(md.get("partition", context.partition_key)),
     )
 
 
 @asset_check(asset="enriched_maxima_derived")
-def no_coord_transform_failures_maxima_derived(context, enriched_maxima_derived):
+def no_coord_transform_failures_maxima_derived(context):
     """WARN if any coordinate transform returned None."""
-    failures = enriched_maxima_derived["counts"]["coord_failures"]
-    passed = failures == 0
-    return AssetCheckResult(
-        passed=passed,
-        severity=AssetCheckSeverity.WARN,
-        metadata={"coord_failures": MetadataValue.int(failures)},
-        description=(
-            "No coordinate transform failures."
-            if passed else f"{failures} coordinate transform failure(s)."
-        ),
+    md = latest_partition_metadata(
+        context.instance, "enriched_maxima_derived", str(context.partition_key)
+    )
+    if md is None:
+        return no_materialization_result()
+    return evaluate_coord_failures(int(md.get("coord_failures", 0)))
+
+
+@asset_check(asset="enriched_maxima_derived")
+def maxima_xrd_derived_provenance_valid(context):
+    """ERROR if any xrd_derived item failed parent resolution.
+
+    Parent resolution for xrd_derived reads meta.prov.wasDerivedFrom
+    or meta.prov.isPartOf, written upstream by the amdee_xrd Girder
+    plugin, and looks the parent up in the inventory. Failures at
+    this stage indicate either a missing prov link on the item (a
+    data-hygiene problem in Girder) or a parent not present in the
+    current inventory slice (an ingest lag).
+
+    Both conditions should be zero in a healthy pipeline. Reads the
+    partition's materialization metadata from the event log (see
+    check_support module docstring) instead of taking the asset as an
+    input.
+    """
+    md = latest_partition_metadata(
+        context.instance, "enriched_maxima_derived", str(context.partition_key)
+    )
+    if md is None:
+        return no_materialization_result(severity=AssetCheckSeverity.ERROR)
+    return evaluate_provenance_valid(
+        int(md.get("inherit_from_parent_errors", 0)),
+        str(md.get("inherit_from_parent_examples", "none")),
     )

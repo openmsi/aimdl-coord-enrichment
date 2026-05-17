@@ -26,24 +26,6 @@ def test_expected_values_doc_exists():
     assert p.exists(), f"missing expected-values doc: {p}"
 
 
-def test_operator_script_exists_and_executable():
-    p = REPO_ROOT / "operations" / "run_live_sweep.sh"
-    assert p.exists(), f"missing operator script: {p}"
-    mode = p.stat().st_mode
-    assert mode & stat.S_IXUSR, (
-        f"{p} is not executable; chmod +x operations/run_live_sweep.sh"
-    )
-
-
-def test_script_requires_env_vars():
-    p = REPO_ROOT / "operations" / "run_live_sweep.sh"
-    text = p.read_text()
-    for var in ("GIRDER_API_URL", "GIRDER_API_KEY",
-                "COORD_TRANSFORMS_YAML",
-                "COORD_ENRICHMENT_MANIFEST_ITEM"):
-        assert var in text, f"script does not check for required env var {var}"
-
-
 def test_phase5_jobs_and_schedules_registered():
     """Definitions should expose 5 jobs (2 pre-Phase-5 + 3 new) and 4 schedules."""
     from helix_dagster import defs
@@ -81,3 +63,32 @@ def test_all_schedules_default_stopped():
             assert s.default_status == DefaultScheduleStatus.STOPPED, (
                 f"schedule {s.name} ships RUNNING; Phase 5 requires STOPPED"
             )
+
+
+def test_archived_run_live_sweep_preserved():
+    """The retired bash sweep script and its context are preserved.
+
+    Reason: future deployment contexts (CI, kubernetes CronJob,
+    environments without UI access) may want to revive a shell-
+    driven sweep. The archive captures the env-var protocol and the
+    operator-confirmation gate that lived in the original script.
+
+    Intentional: the archived .sh file is NOT executable. It is a
+    historical document, not a runnable artifact at this path.
+    """
+    archive_dir = REPO_ROOT / "docs" / "archive" / "run_live_sweep"
+    assert archive_dir.is_dir(), f"missing archive: {archive_dir}"
+
+    script = archive_dir / "run_live_sweep.sh"
+    note = archive_dir / "ARCHIVE_NOTE.md"
+    section = archive_dir / "LIVE_SWEEP_SECTION_2026-04-27.md"
+    for p in (script, note, section):
+        assert p.exists(), f"archive missing: {p}"
+
+    # The script is archived, not active. Asserting it is NOT
+    # executable prevents accidental "fix it in place" attempts —
+    # if someone wants to revive it they should copy it back to
+    # operations/ deliberately, not run it from docs/.
+    assert not (script.stat().st_mode & stat.S_IXUSR), (
+        f"{script} should not be executable in archive"
+    )

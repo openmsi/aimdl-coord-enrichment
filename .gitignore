@@ -212,3 +212,4 @@ CLAUDE.local.md
 
 # Local dev symlink to coordinate-transformer YAML (see .claude/helix_dagster_context.md)
 instrument_coordinate_transforms.yaml
+.env.local

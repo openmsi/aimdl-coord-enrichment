@@ -7,7 +7,8 @@ from helix_dagster.girder_io import (
     fetch_aimdl_datafiles,
     fetch_all_aimdl_datafiles,
     fetch_items_by_partition,
-    fetch_partition_keys,
+    fetch_partition_details,
+    fetch_partition_index,
     list_recent_spreadsheets,
 )
 
@@ -107,14 +108,14 @@ def test_fetch_all_single_page():
 # ── partition-aware helpers ─────────────────────────────────────────
 
 
-def test_fetch_partition_keys():
-    """fetch_partition_keys returns the raw dict from /aimdl/partition."""
+def test_fetch_partition_index():
+    """fetch_partition_index returns the raw dict from /aimdl/partition."""
     client = MagicMock()
     client.get.return_value = {
         "JHAMAB00001//2026-04-16": "hash-a",
         "JHAMAB00002//2026-04-17": "hash-b",
     }
-    result = fetch_partition_keys(client, "xrd_raw")
+    result = fetch_partition_index(client, "xrd_raw")
     client.get.assert_called_once_with(
         "aimdl/partition",
         parameters={"dataType": "xrd_raw"},
@@ -123,6 +124,38 @@ def test_fetch_partition_keys():
         "JHAMAB00001//2026-04-16": "hash-a",
         "JHAMAB00002//2026-04-17": "hash-b",
     }
+
+
+def test_fetch_partition_index_with_since():
+    client = MagicMock()
+    client.get.return_value = {}
+    fetch_partition_index(
+        client, "xrd_raw", since="2026-04-01T00:00:00Z"
+    )
+    client.get.assert_called_once_with(
+        "aimdl/partition",
+        parameters={
+            "dataType": "xrd_raw",
+            "since": "2026-04-01T00:00:00Z",
+        },
+    )
+
+
+def test_fetch_partition_details():
+    client = MagicMock()
+    items = [_make_item("a1.tif", "JHAMAB00001", "xrd_raw")]
+    client.get.return_value = items
+    result = fetch_partition_details(
+        client, "xrd_raw", "JHAMAB00001//2026-04-16",
+    )
+    client.get.assert_called_once_with(
+        "aimdl/partition/details",
+        parameters={
+            "dataType": "xrd_raw",
+            "key": "JHAMAB00001//2026-04-16",
+        },
+    )
+    assert result == items
 
 
 def test_fetch_items_by_partition_paginates_over_keys():

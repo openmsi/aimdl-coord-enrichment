@@ -8,11 +8,44 @@ from dagster import build_asset_context
 
 from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
 from helix_dagster.coord_enrichment.config_snapshot import CoordTransformSnapshot
+from helix_dagster.coord_enrichment.check_support import (
+    evaluate_coord_failures,
+    evaluate_provenance_valid,
+    evaluate_success_rate,
+)
 from helix_dagster.coord_enrichment.maxima_derived_leaf import (
     enriched_maxima_derived,
-    enrichment_success_rate_maxima_derived,
-    no_coord_transform_failures_maxima_derived,
 )
+
+
+def _success_rate(result):
+    """Apply the success-rate decision to a leaf-return dict.
+
+    The @asset_check wrapper reads these same numbers from the event
+    log; this exercises the pure decision logic directly.
+    """
+    c = result["counts"]
+    return evaluate_success_rate(
+        seen=c["seen"],
+        written=c["written"],
+        simulated_dry_run=c["simulated_dry_run"],
+        skipped_no_change=c["skipped_no_change"],
+        resolution_errors=c["resolution_errors"],
+        write_errors_count=len(result.get("write_errors", [])),
+        partition_label=result["partition_key"],
+    )
+
+
+def _provenance_valid(result):
+    """Apply the provenance-valid decision to a leaf-return dict."""
+    inherit = [
+        e for e in result.get("resolution_errors", [])
+        if e.get("stage") == "inherit_from_parent"
+    ]
+    examples = ", ".join(
+        f"{e.get('item_id', '?')}: {e.get('error', '')}" for e in inherit[:3]
+    ) or "none"
+    return evaluate_provenance_valid(len(inherit), examples)
 
 EXAMPLE_TS = datetime(2026, 4, 16, 16, 56, 16, tzinfo=timezone.utc)
 
@@ -223,33 +256,25 @@ def test_coord_failure_counted():
 def test_enrichment_success_rate_check_passes():
     item = _derived_item()
     result, _ = _run_asset([item], dry_run=False)
-    ctx = build_asset_context()
-    check_result = enrichment_success_rate_maxima_derived(ctx, result)
-    assert check_result.passed is True
+    assert _success_rate(result).passed is True
 
 
 def test_enrichment_success_rate_check_fails_on_all_errors():
     parent = _parent(station_x=None)
     item = _derived_item()
     result, _ = _run_asset([item], dry_run=False, parent=parent)
-    ctx = build_asset_context()
-    check_result = enrichment_success_rate_maxima_derived(ctx, result)
-    assert check_result.passed is False
+    assert _success_rate(result).passed is False
 
 
 def test_enrichment_success_rate_check_empty_partition():
     result, _ = _run_asset([], dry_run=False)
-    ctx = build_asset_context()
-    check_result = enrichment_success_rate_maxima_derived(ctx, result)
-    assert check_result.passed is True
+    assert _success_rate(result).passed is True
 
 
 def test_no_coord_transform_failures_check_passes():
     item = _derived_item()
     result, _ = _run_asset([item], dry_run=False)
-    ctx = build_asset_context()
-    check_result = no_coord_transform_failures_maxima_derived(ctx, result)
-    assert check_result.passed is True
+    assert evaluate_coord_failures(result["counts"]["coord_failures"]).passed is True
 
 
 def test_no_coord_transform_failures_check_fails():
@@ -258,6 +283,115 @@ def test_no_coord_transform_failures_check_fails():
 
     item = _derived_item()
     result, _ = _run_asset([item], dry_run=False, transform_fn=fail_transform)
-    ctx = build_asset_context()
-    check_result = no_coord_transform_failures_maxima_derived(ctx, result)
-    assert check_result.passed is False
+    assert evaluate_coord_failures(result["counts"]["coord_failures"]).passed is False
+
+
+# ---- Lineage + provenance_valid tests ----
+
+
+def test_enriched_maxima_derived_depends_on_raw():
+    """Step 6 lineage rewiring: derived depends on raw."""
+    from dagster import AssetKey
+
+    assert AssetKey(["enriched_maxima_raw"]) in enriched_maxima_derived.dependency_keys
+
+
+def test_maxima_xrd_derived_provenance_valid_detects_missing_prov():
+    fake_derived_output = {
+        "resolution_errors": [
+            {
+                "item_id": "X1",
+                "name": "foo.tif",
+                "stage": "inherit_from_parent",
+                "error": "derived item X1 has no prov.wasDerivedFrom or prov.isPartOf",
+            },
+            {
+                "item_id": "X2",
+                "name": "bar.tif",
+                "stage": "experiment_date",
+                "error": "item X2 missing meta.experiment_date",
+            },
+        ],
+    }
+    result = _provenance_valid(fake_derived_output)
+    assert result.passed is False
+    assert result.metadata["unresolved_count"].value == 1
+
+
+def test_maxima_xrd_derived_provenance_valid_passes_on_clean():
+    fake_derived_output = {"resolution_errors": []}
+    result = _provenance_valid(fake_derived_output)
+    assert result.passed is True
+
+
+# ---- Step 1 precondition tests ----
+
+
+def test_fast_fails_when_no_parents_enriched():
+    unenriched_parents = [
+        _parent(item_id=f"p{i}", station_x=None, include_prov=False)
+        for i in range(3)
+    ]
+    inventory = {
+        PARTITION_KEY: [_derived_item()],
+        "MAXIMA/xrd_raw": unenriched_parents,
+    }
+    girder = MagicMock()
+    config = CoordEnrichmentConfig(dry_run=True)
+    snap = _snapshot()
+    ctx = build_asset_context(partition_key=PARTITION_KEY)
+
+    with pytest.raises(Exception) as excinfo:
+        enriched_maxima_derived(ctx, config, inventory, snap, girder)
+
+    msg = str(excinfo.value)
+    assert "0/3" in msg
+    assert "enriched_maxima_raw" in msg
+
+
+def test_warns_when_some_parents_unenriched():
+    raw_items = [
+        _parent(item_id="p_ok", station_x=11.0, include_prov=True),
+        _parent(item_id="p_bad", station_x=None, include_prov=False),
+    ]
+    inventory = {
+        PARTITION_KEY: [],
+        "MAXIMA/xrd_raw": raw_items,
+    }
+    girder = MagicMock()
+    config = CoordEnrichmentConfig(dry_run=True)
+    snap = _snapshot()
+    ctx = build_asset_context(partition_key=PARTITION_KEY)
+
+    warning_spy = MagicMock()
+    ctx.log.warning = warning_spy
+
+    result = enriched_maxima_derived(ctx, config, inventory, snap, girder)
+
+    warning_spy.assert_called()
+    fmt = warning_spy.call_args[0][0]
+    assert "partial" in fmt.lower() or "parents enriched" in fmt
+    assert result["counts"]["seen"] == 0
+
+
+def test_emits_parent_count_metadata():
+    raw_items = [
+        _parent(item_id="p_ok", station_x=11.0, include_prov=True),
+        _parent(item_id="p_bad", station_x=None, include_prov=False),
+    ]
+    inventory = {
+        PARTITION_KEY: [],
+        "MAXIMA/xrd_raw": raw_items,
+    }
+    girder = MagicMock()
+    config = CoordEnrichmentConfig(dry_run=True)
+    snap = _snapshot()
+    ctx = build_asset_context(partition_key=PARTITION_KEY)
+    ctx.add_output_metadata = MagicMock()
+
+    enriched_maxima_derived(ctx, config, inventory, snap, girder)
+
+    ctx.add_output_metadata.assert_called_once()
+    metadata = ctx.add_output_metadata.call_args[0][0]
+    assert metadata["parents_total"].value == 2
+    assert metadata["parents_enriched"].value == 1

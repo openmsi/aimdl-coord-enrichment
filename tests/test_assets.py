@@ -98,6 +98,7 @@ def test_asset_dag_loads():
     asset_keys = {ak.to_user_string() for ak in repo.asset_graph.get_all_asset_keys()}
 
     expected_assets = {
+        "experiment_log_source",
         "raw_experiment_log",
         "pdv_trace_inventory",
         "validated_rows",
@@ -115,6 +116,32 @@ def test_asset_dag_loads():
         str(ck) for ck in repo.asset_graph.asset_check_keys
     }
     assert len(check_keys) >= 5, f"Expected at least 5 asset checks, got {len(check_keys)}"
+
+
+def test_helix_folder_sensor_run_config_validates():
+    """The sensor's RunRequest must validate against process_helix_assets_job.
+
+    Regression test for the bug where helix_folder_sensor configured
+    only `raw_experiment_log` while three ops took ExperimentLogConfig.
+    """
+    from dagster import validate_run_config
+    from helix_dagster import defs
+
+    job = defs.resolve_job_def("process_helix_assets_job")
+
+    # Reproduce the exact run_config shape the sensor emits.
+    run_config = {
+        "ops": {
+            "experiment_log_source": {
+                "config": {
+                    "item_id": "fake_id_for_validation",
+                    "filename": "anything.csv",
+                }
+            }
+        }
+    }
+    # Will raise DagsterInvalidConfigError on shape mismatch.
+    validate_run_config(job, run_config)
 
 
 def test_igsn_mismatch_detection():
@@ -178,7 +205,7 @@ def test_quality_report_alpss_completeness():
 def test_processing_manifest_clean():
     """Test manifest for a run with no issues."""
     from unittest.mock import MagicMock
-    from helix_dagster.assets import processing_manifest as manifest_fn, ExperimentLogConfig
+    from helix_dagster.assets import processing_manifest as manifest_fn
 
     df = pd.DataFrame([
         {"Sample_IGSN": "ABCDEF12345", "PDV_FileName": "shot001",
@@ -193,13 +220,13 @@ def test_processing_manifest_clean():
               "summary": {"total_igsn_issues": 0, "total_pdv_issues": 0,
                           "total_write_errors": 0, "alpss_coverage_pct": 100.0}}
 
-    config = ExperimentLogConfig(item_id="test_item_123", filename="test.csv")
+    source = {"item_id": "test_item_123", "filename": "test.csv"}
     mock_girder = MagicMock()
 
     ctx = build_asset_context()
     result = manifest_fn(
         context=ctx,
-        config=config,
+        experiment_log_source=source,
         quality_report=report,
         validated_rows=validated,
         pdv_cross_references=xrefs,
@@ -217,7 +244,7 @@ def test_processing_manifest_clean():
 def test_processing_manifest_with_warnings():
     """Test manifest for a run with issues."""
     from unittest.mock import MagicMock
-    from helix_dagster.assets import processing_manifest as manifest_fn, ExperimentLogConfig
+    from helix_dagster.assets import processing_manifest as manifest_fn
 
     df = pd.DataFrame([
         {"Sample_IGSN": "INVALID", "PDV_FileName": "shot001",
@@ -235,13 +262,13 @@ def test_processing_manifest_with_warnings():
                                      "igsns_without_alpss_results": 0, "missing_igsns": []},
               "summary": {"alpss_coverage_pct": 0.0}}
 
-    config = ExperimentLogConfig(item_id="test_item_456", filename="test.csv")
+    source = {"item_id": "test_item_456", "filename": "test.csv"}
     mock_girder = MagicMock()
 
     ctx = build_asset_context()
     result = manifest_fn(
         context=ctx,
-        config=config,
+        experiment_log_source=source,
         quality_report=report,
         validated_rows=validated,
         pdv_cross_references=xrefs,
@@ -261,7 +288,6 @@ def test_enriched_pdv_metadata_writes_provenance():
 
     from helix_dagster.assets import (
         enriched_pdv_metadata as enrich_fn,
-        ExperimentLogConfig,
     )
 
     df = pd.DataFrame([
@@ -284,13 +310,13 @@ def test_enriched_pdv_metadata_writes_provenance():
         },
         "pdv_issues": [],
     }
-    config = ExperimentLogConfig(item_id="src_spreadsheet_id", filename="test.csv")
+    source = {"item_id": "src_spreadsheet_id", "filename": "test.csv"}
     mock_girder = MagicMock()
 
     ctx = build_asset_context()
     result = enrich_fn(
         context=ctx,
-        config=config,
+        experiment_log_source=source,
         pdv_cross_references=xrefs,
         validated_rows=validated,
         girder=mock_girder,
@@ -325,7 +351,6 @@ def test_enriched_pdv_metadata_version_boundary_dispatch():
     from dagster import build_asset_context
     from helix_dagster.assets import (
         enriched_pdv_metadata as enriched_fn,
-        ExperimentLogConfig,
     )
     from helix_dagster.coordinates import _COORD_TRANSFORMER
 
@@ -371,11 +396,11 @@ def test_enriched_pdv_metadata_version_boundary_dispatch():
         (item_id, meta)
     )
 
-    config = ExperimentLogConfig(item_id="src_sheet_item", filename="test.csv")
+    source = {"item_id": "src_sheet_item", "filename": "test.csv"}
     ctx = build_asset_context()
     result = enriched_fn(
         context=ctx,
-        config=config,
+        experiment_log_source=source,
         pdv_cross_references=xrefs,
         validated_rows=validated,
         girder=mock_girder,

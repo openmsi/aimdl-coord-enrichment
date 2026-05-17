@@ -16,7 +16,13 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
-from dagster import build_asset_context
+from dagster import (
+    AssetKey,
+    AssetMaterialization,
+    DagsterInstance,
+    MetadataValue,
+    build_asset_context,
+)
 
 from helix_dagster.coordinates import _COORD_TRANSFORMER
 from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
@@ -181,6 +187,36 @@ def girder_mock():
     return mock
 
 
+def _report_inheritance_leaf_event(instance, asset_name, partition_key, result):
+    """Persist a runless materialization for one inheritance-leaf partition.
+
+    Both enriched_helix_alpss and enriched_maxima_derived write the
+    same metadata key set, so one helper covers both.
+    """
+    counts = result["counts"]
+    instance.report_runless_asset_event(
+        AssetMaterialization(
+            asset_key=AssetKey(asset_name),
+            partition=partition_key,
+            metadata={
+                "partition": MetadataValue.text(partition_key),
+                "seen": MetadataValue.int(counts["seen"]),
+                "written": MetadataValue.int(counts["written"]),
+                "simulated_dry_run": MetadataValue.int(counts["simulated_dry_run"]),
+                "skipped_no_change": MetadataValue.int(counts["skipped_no_change"]),
+                "coord_failures": MetadataValue.int(counts["coord_failures"]),
+                "resolution_errors": MetadataValue.int(counts["resolution_errors"]),
+                "transform_versions_used": MetadataValue.text(
+                    ", ".join(
+                        f"{k}={v}" for k, v in
+                        sorted(result["version_counter"].items())
+                    ) or "none"
+                ),
+            },
+        )
+    )
+
+
 def _run_phase4_dag(girder_mock):
     """Run all Phase 4 assets in dependency order."""
     snap = _snapshot()
@@ -189,52 +225,61 @@ def _run_phase4_dag(girder_mock):
         manifest_tracking_item_id=TRACKING_ITEM_ID,
     )
 
-    alpss_results = {}
-    for pkey in ["HELIX/pdv_alpss_output", "HELIX/pdv_alpss_result", "HELIX/pdv_alpss_results"]:
-        ctx = build_asset_context(partition_key=pkey)
-        with patch(
-            "helix_dagster.coord_enrichment.helix_alpss_leaf.transform_with_named_version",
-            side_effect=_mock_transform_any,
-        ):
-            alpss_results[pkey] = enriched_helix_alpss(
-                ctx, config, INVENTORY, snap, girder_mock,
+    with DagsterInstance.ephemeral() as instance:
+        alpss_results = {}
+        for pkey in [
+            "HELIX/pdv_alpss_output",
+            "HELIX/pdv_alpss_result",
+            "HELIX/pdv_alpss_results",
+        ]:
+            ctx = build_asset_context(partition_key=pkey, instance=instance)
+            with patch(
+                "helix_dagster.coord_enrichment.helix_alpss_leaf."
+                "transform_with_named_version",
+                side_effect=_mock_transform_any,
+            ):
+                leaf_result = enriched_helix_alpss(
+                    ctx, config, INVENTORY, snap, girder_mock,
+                )
+                alpss_results[pkey] = leaf_result
+            _report_inheritance_leaf_event(
+                instance, "enriched_helix_alpss", pkey, leaf_result,
             )
 
-    derived_results = {}
-    for pkey in ["MAXIMA/xrd_derived"]:
-        ctx = build_asset_context(partition_key=pkey)
-        with patch(
-            "helix_dagster.coord_enrichment.maxima_derived_leaf.transform_with_named_version",
-            side_effect=_mock_transform_any,
-        ):
-            derived_results[pkey] = enriched_maxima_derived(
-                ctx, config, INVENTORY, snap, girder_mock,
+        derived_results = {}
+        for pkey in ["MAXIMA/xrd_derived"]:
+            ctx = build_asset_context(partition_key=pkey, instance=instance)
+            with patch(
+                "helix_dagster.coord_enrichment.maxima_derived_leaf."
+                "transform_with_named_version",
+                side_effect=_mock_transform_any,
+            ):
+                leaf_result = enriched_maxima_derived(
+                    ctx, config, INVENTORY, snap, girder_mock,
+                )
+                derived_results[pkey] = leaf_result
+            _report_inheritance_leaf_event(
+                instance, "enriched_maxima_derived", pkey, leaf_result,
             )
 
-    observer_ctx = build_asset_context()
-    with patch(
-        "helix_dagster.coord_enrichment.pdv_observer.fetch_all_aimdl_datafiles",
-        return_value=[PDV_TRACE_ITEM],
-    ):
-        observer_result = helix_pdv_coverage_observer(observer_ctx, girder_mock)
+        observer_ctx = build_asset_context(instance=instance)
+        with patch(
+            "helix_dagster.coord_enrichment.pdv_observer.fetch_all_aimdl_datafiles",
+            return_value=[PDV_TRACE_ITEM],
+        ):
+            observer_result = helix_pdv_coverage_observer(observer_ctx, girder_mock)
 
-    last_alpss = alpss_results["HELIX/pdv_alpss_output"]
-    last_derived = derived_results["MAXIMA/xrd_derived"]
+        report_ctx = build_asset_context(instance=instance)
+        report = coord_enrichment_report(
+            report_ctx,
+            {"counters": {}, "unresolved": [], "write_ops": [], "dry_run": False},
+            observer_result,
+        )
 
-    report_ctx = build_asset_context()
-    report = coord_enrichment_report(
-        report_ctx,
-        {},  # enriched_maxima_raw — not exercised
-        last_alpss,
-        last_derived,
-        {"counters": {}, "unresolved": [], "write_ops": [], "dry_run": False},
-        observer_result,
-    )
-
-    manifest_ctx = build_asset_context()
-    manifest = coord_enrichment_manifest(
-        manifest_ctx, config, report, girder_mock,
-    )
+        manifest_ctx = build_asset_context(instance=instance)
+        manifest = coord_enrichment_manifest(
+            manifest_ctx, config, report, girder_mock,
+        )
 
     return alpss_results, derived_results, observer_result, report, manifest
 
@@ -322,11 +367,16 @@ def test_phase4_report_aggregates_all_leaves(girder_mock):
     _, _, _, report, _ = _run_phase4_dag(girder_mock)
 
     summary = report["summary"]
-    assert summary["total_writes"] == 2
-    assert summary["leaf_partitions_covered"] == 2
+    # 1 write across each of pdv_alpss_output, pdv_alpss_results,
+    # MAXIMA/xrd_derived; pdv_alpss_result has 0 in-scope items.
+    assert summary["total_writes"] == 3
+    assert summary["leaf_partitions_covered"] == 4
 
     assert "pdv_trace" in report["coverage"]
     assert report["coverage"]["pdv_trace"]["fully_enriched"] == 1
+
+    assert "leaves_unmaterialized" in report
+    assert summary["leaf_partitions_unmaterialized"] >= 0
 
 
 def test_phase4_manifest_written(girder_mock):
