@@ -1,4 +1,4 @@
-# Runbook: merge PR #23 (issue23) → main
+# Runbook: merge the issue23 work → main
 
 - **Created:** 2026-05-17
 - **Decision:** merge #23 to `main` first, *then* do the package
@@ -11,7 +11,25 @@
   enablement (the real review gate) stays governed by
   `docs/runbooks/coord_enrichment_production_sweep.md` +
   `first_sweep_expected_values.md`.
-- **#23 vs main:** 100 ahead, **0 behind** → conflict-free merge.
+- **issue23 vs main:** 103 ahead, **0 behind** → conflict-free merge.
+
+## ⚠️ INCIDENT 2026-05-17 — wrong-base merge (recovered, nothing lost)
+
+The PR for this work was **#24** (NOT "#23" — that is the
+issue/branch name; this runbook originally mislabeled it). PR #24's
+**base was `refactor/asset-dag`, not `main`**. It was merged
+2026-05-17 23:12Z (davidelbert) → merge commit **`d1a505d`** now on
+`refactor/asset-dag`. **`main` is untouched (`04075df`); the
+`refactor/issue23-dynamic-partitions` branch is intact (`31be701`);
+nothing lost.** asset-dag now == issue23 + that one merge commit
+(no foreign commits ride along).
+
+**Corrected path (Option 1):** open a NEW PR, head
+`refactor/issue23-dynamic-partitions`, **base `main`**, merge with
+a merge commit. Steps 1–3 below still hold for the real main merge
+(gate green, 0-behind, rollback tag `pre-issue23-merge` @
+`04075df`). Step 4 is rewritten accordingly. Hard lesson:
+**verify the PR base is `main` before merging.**
 
 ---
 
@@ -44,19 +62,19 @@ sourced:** **311 passed, 1 skipped, 0 failed**. ✅ Hermetic gate.
 
 ## Merge path (you execute the merge/push/tag; I can run gates)
 
-### Step 1 — Fresh gate at the merge point ☐
+### Step 1 — Fresh gate at the merge point ☑ (311/1/0 @ 31be701)
 Re-establish, don't trust stale green (hermetic — no env setup):
 ```
 .venv/bin/python -m pytest tests/ -q          # expect 311 passed, 1 skipped, 0 failed
 ```
 
-### Step 2 — Confirm no drift ☐
+### Step 2 — Confirm no drift ☑ (0 behind main)
 ```
 git fetch origin -q
 git rev-list --count origin/refactor/issue23-dynamic-partitions..origin/main   # expect 0
 ```
 
-### Step 3 — Tag a one-command rollback ☐
+### Step 3 — Tag a one-command rollback ☑ (pre-issue23-merge @ 04075df)
 The insurance that makes landing a by-volume-unreviewable PR
 responsible:
 ```
@@ -64,9 +82,15 @@ git tag pre-issue23-merge origin/main
 git push origin pre-issue23-merge
 ```
 
-### Step 4 — Merge with a MERGE COMMIT (not squash, not rebase) ☐
+### Step 4 — Create recovery PR (base=main) + merge ☐
 ```
-gh pr merge 23 --merge --subject "Merge PR #23: dynamic partitions for MAXIMA raw + provenance split" --body "<message below>"
+# 4a. Create the PR with an EXPLICIT base; note the number it returns.
+gh pr create --base main --head refactor/issue23-dynamic-partitions \
+  --title "Merge issue23 work into main" --body-file <msg-file>
+# 4b. ASSERT base is main BEFORE merging (the check skipped last time):
+gh pr view <NEW#> --json baseRefName -q .baseRefName    # MUST print: main
+# 4c. Merge with a MERGE COMMIT (never squash/rebase):
+gh pr merge <NEW#> --merge
 ```
 **Why `--merge` only:** project memory and committed scratch docs
 reference specific SHAs (`6ad1aa9`, `651d47a`, `b276835`,
@@ -94,7 +118,7 @@ Branch the rename off fresh `main` per `rename_plan.md` (Phase 1).
 ## Merge commit message (paste into Step 4 `--body` / GitHub UI)
 
 ```
-Merge PR #23: Dynamic partitions for MAXIMA raw + provenance architecture split
+Merge issue23 work into main: dynamic partitions for MAXIMA raw + provenance architecture split
 
 Lands the issue23 refactor: dynamic MAXIMA-raw partitions via the
 /aimdl/partition endpoint, the provenance architecture split
@@ -144,10 +168,21 @@ above basis.
 - [x] Sound gate established 2026-05-17 (311/1/0, HEAD 333a5d7)
 - [x] Suite made hermetic 2026-05-17 (conftest + vendored fixture;
       311/1/0 with env UNSET) — gate no longer env-dependent
-- [ ] Step 1 fresh gate at merge point
-- [ ] Step 2 no-drift confirmed
-- [ ] Step 3 rollback tag pushed
-- [ ] Step 4 merged via --merge — merge commit sha: ____
-- [ ] Step 5 post-merge gate on main green
-- [ ] Step 6 schedules STOPPED confirmed
-- [ ] Step 7 → rename_plan.md
+- [x] Step 1 fresh gate 2026-05-17 — 311/1/0 at HEAD 31be701
+- [x] Step 2 no-drift — 0 behind main, branch==origin (103 ahead)
+- [x] Step 3 rollback tag pushed → pre-issue23-merge @ 04075df (origin/main pre-merge)
+- [!] INCIDENT 2026-05-17: PR #24 merged to WRONG base
+      (refactor/asset-dag, commit d1a505d). main untouched; nothing
+      lost. Recovering via Option 1 (new PR base=main).
+- [x] Step 4: recovery PR **#26** (base ASSERTED == main) merged
+      2026-05-17 → merge commit **c1400c4** on origin/main, real
+      2-parent merge commit, curated basis-of-acceptance message in
+      the commit body. main now == 31be701 tree.
+- [x] Step 5 post-merge gate: 311/1/0 on merged tree (proven
+      byte-identical to origin/main via empty git diff)
+- [x] Step 6 schedules STOPPED confirmed (4× STOPPED, 0 RUNNING)
+- [ ] Step 7 → rename_plan.md (next phase: rename off fresh main)
+
+**RUNBOOK COMPLETE 2026-05-17.** issue23 work is on `main`
+(`c1400c4`). Rollback if ever needed: `pre-issue23-merge` @
+`04075df`. Next: `rename_plan.md` Phase 1 (branch off fresh main).

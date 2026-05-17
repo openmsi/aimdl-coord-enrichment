@@ -1,0 +1,38 @@
+Merge issue23 work into main: dynamic partitions for MAXIMA raw + provenance architecture split
+
+Lands the issue23 refactor: dynamic MAXIMA-raw partitions via the
+/aimdl/partition endpoint, the provenance architecture split
+(helix_alpss / maxima_derived leaves), the leaf-check IOManager-load
+fix, and the coord_enrichment dry-run rehearsal tooling.
+
+Basis of acceptance (no CI on this repo; controls are manual):
+- Full test suite: 311 passed, 1 skipped, 0 failed. The suite is
+  hermetic (tests/conftest.py points the transformer at a vendored
+  fixture YAML), so this result is environment-independent and the
+  coordinate-transform path is always exercised. The 1 skip is the
+  deliberate forward-compat MAXIMA-v2 test.
+- Live, READ-ONLY dry-run rehearsals against production (validation
+  plan section 3): zero Girder writes performed at any point.
+- Leaf-check IOManager-load fix validated live on maxima_raw and
+  maxima_derived; Defect-4 verdict verified live.
+
+Explicitly NOT done, by deliberate decision:
+- Line-by-line human review: ~100 commits, not feasible or
+  meaningful at this volume; the green suite + dry-run rehearsals
+  are the substitute control.
+- No production WRITE path has been exercised (all dry-run).
+
+Compensating operational controls: schedules ship STOPPED, sensors
+opt-in, all writes gated by dry_run. This merge changes code state
+only; production enablement remains gated by
+docs/runbooks/coord_enrichment_production_sweep.md and
+first_sweep_expected_values.md, which is the real review gate.
+
+Context: supersedes PR #24, which was inadvertently based on
+refactor/asset-dag instead of main (merge commit d1a505d landed on
+that branch; main was untouched). This PR re-targets the same
+issue23 work onto main directly. Nothing was lost.
+
+Rollback: tag pre-issue23-merge marks main immediately prior.
+Merged by the project maintainer (solo, agent-assisted) on the
+above basis.
