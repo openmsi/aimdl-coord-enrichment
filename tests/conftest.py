@@ -1,3 +1,20 @@
+import os
+
+# Make the suite self-contained: point the coordinate transformer at a
+# vendored transforms YAML BEFORE any helix_dagster import
+# (helix_dagster.coordinates builds the transformer at module-import
+# time, so an autouse fixture would be too late). The fixture is named
+# distinctly from the real config because .gitignore deliberately
+# ignores `instrument_coordinate_transforms.yaml` anywhere in the tree.
+# setdefault keeps a real .env.local COORD_TRANSFORMS_YAML overriding.
+os.environ.setdefault(
+    "COORD_TRANSFORMS_YAML",
+    os.path.join(
+        os.path.dirname(__file__), "fixtures",
+        "coord_transforms_fixture.yaml",
+    ),
+)
+
 import pandas as pd
 import pytest
 
