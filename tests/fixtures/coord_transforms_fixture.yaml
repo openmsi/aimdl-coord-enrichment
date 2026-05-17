@@ -1,0 +1,60 @@
+canonical_system:
+  origin: bottom-left
+  x_positive: right
+  y_positive: up
+  units: mm
+  sample_width: 40.0
+  sample_height: 40.0
+
+instruments:
+  - name: MAXIMA
+    units: mm
+    versions:
+      - version: "v1"
+        valid_from: null
+        valid_until: null
+        calibration_points:
+          - instrument: [-14, -20]
+            sample: [0, 0]
+          - instrument: [26, -20]
+            sample: [40, 0]
+          - instrument: [-14, 20]
+            sample: [0, 40]
+
+  - name: HELIX
+    units: mm
+    versions:
+      - version: "v1"
+        valid_from: null
+        valid_until: "2026-04-01T00:00:00-04:00"
+        calibration_points:
+          - instrument: [8, 8]
+            sample: [32, 8]
+          - instrument: [32, 32]
+            sample: [8, 32]
+          - instrument: [32, 8]
+            sample: [8, 8]
+      - version: "v2"
+        valid_from: "2026-04-01T00:00:00-04:00"
+        valid_until: null
+        calibration_points:
+          - instrument: [8, 8]
+            sample: [8, 8]
+          - instrument: [32, 32]
+            sample: [32, 32]
+          - instrument: [32, 8]
+            sample: [32, 8]
+
+  - name: SPHINX
+    units: mm
+    versions:
+      - version: "v1"
+        valid_from: null
+        valid_until: null
+        calibration_points:
+          - instrument: [125.319, 148.213]
+            sample: [0, 0]
+          - instrument: [124.924, 107.753]
+            sample: [0, 40]
+          - instrument: [165.189, 107.350]
+            sample: [40, 40]

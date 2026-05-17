@@ -1,3 +1,5 @@
+.DS_Store
+.tmp_dagster_home_*
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -205,3 +207,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+CLAUDE.local.md
+.claude/helix_dagster_context.md
+
+# Local dev symlink to coordinate-transformer YAML (see .claude/helix_dagster_context.md)
+instrument_coordinate_transforms.yaml
+.env.local

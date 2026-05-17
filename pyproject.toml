@@ -1,17 +1,25 @@
 [build-system]
 requires = ["setuptools"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "helix_dagster"
-version = "0.1.0"
+version = "0.6.0"
+description = "Dagster pipeline for HELIX experiment metadata extraction and enrichment"
 dependencies = [
     "dagster",
     "dagster-webserver",
     "girder-client>=3.1.20",
     "pandas",
     "openpyxl",
+    "coordinate-transformer>=0.3.0",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["helix_dagster*"]
 
 [tool.dagster]
 module_name = "helix_dagster"
