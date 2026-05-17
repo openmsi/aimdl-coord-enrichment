@@ -15,43 +15,38 @@
 
 ---
 
-## ⚠️ Gate precondition (do not skip — it fails silently)
+## Gate is hermetic (self-contained — no env setup needed)
 
-The test gate is **only sound with `COORD_TRANSFORMS_YAML` set**.
-Without it, `helix_dagster.coordinates._COORD_TRANSFORMER` is `None`
-and ~22 transformer-dependent tests (`*_e2e`, `phase4_e2e`,
-`test_leaf_check_partition_isolation`, `test_coordinates`)
-**self-skip** — the suite reports `289 passed, 23 skipped` and looks
-"green" while the coordinate-transform path (the entire point of
-this PR) is **unexercised**. That is NOT a valid merge basis.
+As of 2026-05-17 the suite is self-contained. `tests/conftest.py`
+sets `COORD_TRANSFORMS_YAML` via `os.environ.setdefault` — before any
+`helix_dagster` import — to the vendored
+`tests/fixtures/coord_transforms_fixture.yaml` (named distinctly
+because `.gitignore:214` deliberately ignores the real-config
+filename `instrument_coordinate_transforms.yaml` tree-wide). So the gate
+yields the same result in ANY environment: fresh clone, CI, a shell
+that never sourced `.env.local`. A real `.env.local`
+`COORD_TRANSFORMS_YAML` still overrides (your workflow unchanged).
 
-- Required env: `COORD_TRANSFORMS_YAML=/home/elbert/aimdl_coordinate_systems/instrument_coordinate_transforms.yaml`
-  (external to the repo; the sibling `aimdl_coordinate_systems`
-  clone, per README dev layout; convention documented at
-  `.claude/issue23_validation_plan.md:194`).
-- Sanity check before trusting the gate:
-  ```
-  .venv/bin/python -c "from helix_dagster.coordinates import _COORD_TRANSFORMER; print(_COORD_TRANSFORMER is None)"
-  # MUST print: False
-  ```
 - **Target result:** `311 passed, 1 skipped, 0 failed`. The single
   skip is expected/permanent: "MAXIMA v2 not registered in YAML;
   test becomes live when a second version is added."
+- The old footgun (unconfigured env → `289 passed, 23 skipped`
+  looking "green") is now structurally impossible.
+- Sync caveat: the vendored fixture is a copy of the real
+  `aimdl_coordinate_systems/instrument_coordinate_transforms.yaml`;
+  if the real transform config changes, re-vendor it.
 
-**Last run (2026-05-17, HEAD `333a5d7`, branch
-`refactor/issue23-dynamic-partitions`, Python 3.12.8/.venv):**
-`_COORD_TRANSFORMER is None? False` → **311 passed, 1 skipped,
-0 failed**. ✅ Sound gate established.
+**Verified 2026-05-17 (HEAD `333a5d7` + conftest fix) with
+`COORD_TRANSFORMS_YAML` explicitly UNSET and `.env.local` NOT
+sourced:** **311 passed, 1 skipped, 0 failed**. ✅ Hermetic gate.
 
 ---
 
 ## Merge path (you execute the merge/push/tag; I can run gates)
 
 ### Step 1 — Fresh gate at the merge point ☐
-Re-establish, don't trust stale green:
+Re-establish, don't trust stale green (hermetic — no env setup):
 ```
-export COORD_TRANSFORMS_YAML=/home/elbert/aimdl_coordinate_systems/instrument_coordinate_transforms.yaml
-.venv/bin/python -c "from helix_dagster.coordinates import _COORD_TRANSFORMER; print(_COORD_TRANSFORMER is None)"  # False
 .venv/bin/python -m pytest tests/ -q          # expect 311 passed, 1 skipped, 0 failed
 ```
 
@@ -84,8 +79,7 @@ history for the later rename's git-rename detection.
 ```
 git checkout main && git pull
 .venv/bin/pip install -e ".[dev]"
-export COORD_TRANSFORMS_YAML=/home/elbert/aimdl_coordinate_systems/instrument_coordinate_transforms.yaml
-.venv/bin/python -m pytest tests/ -q          # expect 311 passed, 1 skipped, 0 failed
+.venv/bin/python -m pytest tests/ -q          # expect 311 passed, 1 skipped, 0 failed (hermetic)
 ```
 
 ### Step 6 — Confirm nothing went operational ☐
@@ -108,12 +102,11 @@ Lands the issue23 refactor: dynamic MAXIMA-raw partitions via the
 fix, and the coord_enrichment dry-run rehearsal tooling.
 
 Basis of acceptance (no CI on this repo; controls are manual):
-- Full test suite: 311 passed, 1 skipped, 0 failed, run with
-  COORD_TRANSFORMS_YAML configured so the coordinate-transform path
-  is actually exercised (without it the suite silently skips ~22
-  transformer tests and under-reports as 289/23 — verified and
-  guarded against). The 1 skip is the deliberate forward-compat
-  MAXIMA-v2 test.
+- Full test suite: 311 passed, 1 skipped, 0 failed. The suite is
+  hermetic (tests/conftest.py points the transformer at a vendored
+  fixture YAML), so this result is environment-independent and the
+  coordinate-transform path is always exercised. The 1 skip is the
+  deliberate forward-compat MAXIMA-v2 test.
 - Live, READ-ONLY dry-run rehearsals against production (validation
   plan section 3): zero Girder writes performed at any point.
 - Leaf-check IOManager-load fix validated live on maxima_raw and
@@ -149,6 +142,8 @@ above basis.
 ## Progress log
 
 - [x] Sound gate established 2026-05-17 (311/1/0, HEAD 333a5d7)
+- [x] Suite made hermetic 2026-05-17 (conftest + vendored fixture;
+      311/1/0 with env UNSET) — gate no longer env-dependent
 - [ ] Step 1 fresh gate at merge point
 - [ ] Step 2 no-drift confirmed
 - [ ] Step 3 rollback tag pushed
