@@ -3,7 +3,7 @@
 import pandas as pd
 from dagster import build_asset_context
 
-from helix_dagster.checks import (
+from aimdl_coord_enrichment.checks import (
     coord_transform_check,
     enrichment_success_rate,
     igsn_consistency,

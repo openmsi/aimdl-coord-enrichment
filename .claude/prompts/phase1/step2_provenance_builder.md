@@ -18,7 +18,7 @@ payloads without duplicating logic.
 
 ## Audit phase (report BEFORE editing)
 
-1. Read `helix_dagster/__init__.py`, `assets.py`, `coordinates.py` to
+1. Read `aimdl_coord_enrichment/__init__.py`, `assets.py`, `coordinates.py` to
    confirm the surrounding module style (type hints, docstring
    conventions, import ordering).
 2. Read `docs/coordinate_enrichment_dag.md` §6.1 and §6.2 for the
@@ -37,7 +37,7 @@ payloads without duplicating logic.
 
 ## Edits
 
-### New file: `helix_dagster/provenance.py`
+### New file: `aimdl_coord_enrichment/provenance.py`
 
 Add exactly this public surface. Do not add extras.
 
@@ -152,7 +152,7 @@ Use `pytest.fixture` for any shared setup; no mocking needed.
 
 ## What NOT to modify
 
-- `helix_dagster/assets.py`, `checks.py`, `coordinates.py`,
+- `aimdl_coord_enrichment/assets.py`, `checks.py`, `coordinates.py`,
   `__init__.py`
 - Any existing test file
 - `pyproject.toml`, YAMLs
@@ -168,7 +168,7 @@ pytest tests/ -v    # whole suite still green
 Run:
 ```bash
 .venv/bin/python -c "
-from helix_dagster.provenance import build_coord_provenance
+from aimdl_coord_enrichment.provenance import build_coord_provenance
 from datetime import datetime, timezone
 p = build_coord_provenance(
     instrument='HELIX',

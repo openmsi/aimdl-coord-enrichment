@@ -19,14 +19,14 @@ from dagster import (
     asset_check,
 )
 
-from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
-from helix_dagster.girder_io import fetch_all_aimdl_datafiles
-from helix_dagster.instruments import (
+from aimdl_coord_enrichment.coord_enrichment.config import CoordEnrichmentConfig
+from aimdl_coord_enrichment.girder_io import fetch_all_aimdl_datafiles
+from aimdl_coord_enrichment.instruments import (
     HELIX_DERIVED_DATA_TYPES,
     INSTRUMENT_HELIX,
     resolve_parent_item_id,
 )
-from helix_dagster.resources import GirderConnection
+from aimdl_coord_enrichment.resources import GirderConnection
 
 
 def _decide(stored: str | None, resolved: str | None) -> str:

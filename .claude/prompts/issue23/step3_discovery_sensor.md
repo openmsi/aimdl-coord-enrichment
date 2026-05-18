@@ -14,13 +14,13 @@ Before editing, read:
 - `.claude/CLAUDE.md`
 - `.claude/prompts/issue23/README.md` (invariants — especially the
   locked dedup-key formula)
-- `helix_dagster/sensors.py` (the existing `helix_folder_sensor`
+- `aimdl_coord_enrichment/sensors.py` (the existing `helix_folder_sensor`
   for style reference)
-- `helix_dagster/__init__.py`
-- `helix_dagster/coord_enrichment/inventory.py` (for the partition
+- `aimdl_coord_enrichment/__init__.py`
+- `aimdl_coord_enrichment/coord_enrichment/inventory.py` (for the partition
   defs)
-- `helix_dagster/coord_enrichment/enrichment_leaves.py`
-- `helix_dagster/girder_io.py` (for `fetch_partition_index`)
+- `aimdl_coord_enrichment/coord_enrichment/enrichment_leaves.py`
+- `aimdl_coord_enrichment/girder_io.py` (for `fetch_partition_index`)
 
 ## Why this step
 
@@ -44,9 +44,9 @@ instructions.txt was edited.
 
 ## Goal
 
-- Add `maxima_raw_discovery_sensor` in `helix_dagster/sensors.py`.
+- Add `maxima_raw_discovery_sensor` in `aimdl_coord_enrichment/sensors.py`.
 - Add `coord_enrichment_maxima_raw_partition_job` in
-  `helix_dagster/__init__.py` — the single-asset job the sensor
+  `aimdl_coord_enrichment/__init__.py` — the single-asset job the sensor
   targets.
 - Wire both into the `Definitions` object.
 - Add tests covering dedup-key construction, the union of
@@ -55,7 +55,7 @@ instructions.txt was edited.
 
 ## Edits
 
-### 1. `helix_dagster/sensors.py`
+### 1. `aimdl_coord_enrichment/sensors.py`
 
 Add the sensor. Import the partition defs and helpers:
 
@@ -69,9 +69,9 @@ from dagster import (
     sensor,
 )
 
-from helix_dagster.coord_enrichment.inventory import MAXIMA_RUN_PARTITIONS
-from helix_dagster.girder_io import fetch_partition_index
-from helix_dagster.resources import GirderConnection
+from aimdl_coord_enrichment.coord_enrichment.inventory import MAXIMA_RUN_PARTITIONS
+from aimdl_coord_enrichment.girder_io import fetch_partition_index
+from aimdl_coord_enrichment.resources import GirderConnection
 ```
 
 (Keep the existing imports for `helix_folder_sensor`.)
@@ -185,7 +185,7 @@ Variable naming discipline (do not deviate):
 Do NOT reuse `run_key` for both the AIMD-L partition string and
 Dagster's dedup string. This collision bites future maintainers.
 
-### 2. `helix_dagster/__init__.py`
+### 2. `aimdl_coord_enrichment/__init__.py`
 
 Add the new single-asset job near the other jobs:
 
@@ -202,7 +202,7 @@ coord_enrichment_maxima_raw_partition_job = define_asset_job(
 Import the new sensor at the top:
 
 ```python
-from helix_dagster.sensors import (
+from aimdl_coord_enrichment.sensors import (
     helix_folder_sensor,
     maxima_raw_discovery_sensor,
 )
@@ -250,7 +250,7 @@ from dagster import (
     build_sensor_context,
 )
 
-from helix_dagster.sensors import maxima_raw_discovery_sensor
+from aimdl_coord_enrichment.sensors import maxima_raw_discovery_sensor
 
 
 def _make_indexes(xrd_raw=None, xrf_raw=None, xrd_metadata=None):
@@ -365,8 +365,8 @@ Full suite must pass, including the new sensor tests.
 ## Commit
 
 ```
-git add helix_dagster/sensors.py \
-        helix_dagster/__init__.py \
+git add aimdl_coord_enrichment/sensors.py \
+        aimdl_coord_enrichment/__init__.py \
         tests/test_sensors_maxima_discovery.py
 git commit -m "Add maxima_raw_discovery_sensor + partition job (#23)
 
@@ -381,7 +381,7 @@ git commit -m "Add maxima_raw_discovery_sensor + partition job (#23)
 
 ## Success criteria
 
-- `maxima_raw_discovery_sensor` exists in `helix_dagster/sensors.py`
+- `maxima_raw_discovery_sensor` exists in `aimdl_coord_enrichment/sensors.py`
   and is registered in `Definitions`.
 - `coord_enrichment_maxima_raw_partition_job` exists and is the
   sensor's target.

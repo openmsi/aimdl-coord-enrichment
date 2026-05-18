@@ -5,11 +5,11 @@ from unittest.mock import patch
 import pytest
 from dagster import build_asset_context
 
-from helix_dagster.coord_enrichment.config_snapshot import (
+from aimdl_coord_enrichment.coord_enrichment.config_snapshot import (
     CoordTransformSnapshot,
     coord_transform_config_snapshot,
 )
-from helix_dagster.coordinates import _COORD_TRANSFORMER
+from aimdl_coord_enrichment.coordinates import _COORD_TRANSFORMER
 
 
 @pytest.mark.skipif(
@@ -33,7 +33,7 @@ def test_snapshot_success():
 
 def test_snapshot_missing_transformer_raises():
     with patch(
-        "helix_dagster.coord_enrichment.config_snapshot._COORD_TRANSFORMER", None
+        "aimdl_coord_enrichment.coord_enrichment.config_snapshot._COORD_TRANSFORMER", None
     ):
         context = build_asset_context()
         with pytest.raises(RuntimeError, match="CoordinateTransformer not loaded"):
@@ -46,7 +46,7 @@ def test_snapshot_missing_transformer_raises():
 )
 def test_snapshot_missing_yaml_leaves_sha_none():
     with patch(
-        "helix_dagster.coord_enrichment.config_snapshot._COORD_YAML",
+        "aimdl_coord_enrichment.coord_enrichment.config_snapshot._COORD_YAML",
         "/nonexistent/path/to/transforms.yaml",
     ):
         context = build_asset_context()

@@ -1,8 +1,8 @@
-"""Tests for helix_dagster.instruments.helix — ALPSS parent discovery."""
+"""Tests for aimdl_coord_enrichment.instruments.helix — ALPSS parent discovery."""
 
 import pytest
 
-from helix_dagster.instruments.helix import alpss_shot_stem, find_parent_pdv_item_id
+from aimdl_coord_enrichment.instruments.helix import alpss_shot_stem, find_parent_pdv_item_id
 
 STEM = "JHAMAC00003-S1R4C3_2026-02-18_18-45-56_shot01_ch1"
 

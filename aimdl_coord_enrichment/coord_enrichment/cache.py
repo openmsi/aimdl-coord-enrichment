@@ -8,7 +8,7 @@ persistence.
 
 from __future__ import annotations
 
-from helix_dagster.instruments.maxima import (
+from aimdl_coord_enrichment.instruments.maxima import (
     fetch_instructions_for_run,
     find_run_folder_id,
 )

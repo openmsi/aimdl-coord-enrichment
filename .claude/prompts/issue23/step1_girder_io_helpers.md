@@ -10,7 +10,7 @@ Branch: `refactor/issue23-dynamic-partitions`. Step 0 is complete
 Before editing, read:
 
 - `.claude/CLAUDE.md`
-- `helix_dagster/girder_io.py`
+- `aimdl_coord_enrichment/girder_io.py`
 - `tests/test_girder_io.py`
 
 ## Why this step
@@ -25,7 +25,7 @@ endpoints:
   — returns the items for exactly one partition, with full meta
   preserved.
 
-Current state in `helix_dagster/girder_io.py`:
+Current state in `aimdl_coord_enrichment/girder_io.py`:
 
 - `fetch_partition_keys(client, data_type)` wraps the first endpoint
   but is misnamed (it returns a hash-valued index, not bare keys)
@@ -42,7 +42,7 @@ uses the new helpers. Asset rewiring lands in Step 2+.
 
 ## Goal
 
-In `helix_dagster/girder_io.py`:
+In `aimdl_coord_enrichment/girder_io.py`:
 
 - Rename `fetch_partition_keys` → `fetch_partition_index`, adding a
   `since: str | None = None` parameter.
@@ -54,7 +54,7 @@ Update `tests/test_girder_io.py` to match.
 
 ## Edits
 
-### 1. `helix_dagster/girder_io.py`
+### 1. `aimdl_coord_enrichment/girder_io.py`
 
 Replace `fetch_partition_keys` with:
 
@@ -185,7 +185,7 @@ for `fetch_partition_keys` and update any stray reference.
 ## Commit
 
 ```
-git add helix_dagster/girder_io.py tests/test_girder_io.py
+git add aimdl_coord_enrichment/girder_io.py tests/test_girder_io.py
 git commit -m "girder_io: add scoped partition helpers (#23)
 
 - Rename fetch_partition_keys -> fetch_partition_index with since= param

@@ -15,15 +15,15 @@ from dagster import (
     asset_check,
 )
 
-from helix_dagster.girder_io import (
+from aimdl_coord_enrichment.girder_io import (
     fetch_all_aimdl_datafiles,
     fetch_items_by_partition,
 )
-from helix_dagster.instruments import (
+from aimdl_coord_enrichment.instruments import (
     all_in_scope_data_types,
     instrument_for_data_type,
 )
-from helix_dagster.resources import GirderConnection
+from aimdl_coord_enrichment.resources import GirderConnection
 
 logger = logging.getLogger(__name__)
 

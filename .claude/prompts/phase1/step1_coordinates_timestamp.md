@@ -12,7 +12,7 @@ criteria).
 
 ## Goal
 
-Update `helix_dagster/coordinates.py` so that `transform_station_to_sample()`:
+Update `aimdl_coord_enrichment/coordinates.py` so that `transform_station_to_sample()`:
 
 1. Accepts an optional timezone-aware `datetime` as `timestamp=`.
 2. Returns a 3-tuple `(sample_x, sample_y, transform_name)` where
@@ -21,7 +21,7 @@ Update `helix_dagster/coordinates.py` so that `transform_station_to_sample()`:
 3. Raises `ValueError` with a clear message if a naive (tz-unaware)
    `datetime` is passed.
 
-Update the one existing caller in `helix_dagster/assets.py`
+Update the one existing caller in `aimdl_coord_enrichment/assets.py`
 (`enriched_pdv_metadata`) minimally — just unpack the 3-tuple and
 ignore the third element with `_`. Expanding that caller to actually
 use the version label and pass a timestamp is the job of Step 3, not
@@ -34,10 +34,10 @@ provenance payloads. Do NOT modify `checks.py`. Those are later steps.
 
 ## Audit phase (report findings BEFORE editing)
 
-1. Read `helix_dagster/coordinates.py` in full.
+1. Read `aimdl_coord_enrichment/coordinates.py` in full.
 2. Read `tests/test_coordinates.py` in full.
 3. Grep for every call site of `transform_station_to_sample` across
-   the repository (not only `helix_dagster/`):
+   the repository (not only `aimdl_coord_enrichment/`):
    ```bash
    grep -rn transform_station_to_sample . --include='*.py' | grep -v .venv
    ```
@@ -61,7 +61,7 @@ Report what you found, then wait for confirmation before editing.
 
 ## Edits
 
-### `helix_dagster/coordinates.py`
+### `aimdl_coord_enrichment/coordinates.py`
 
 - Add `from datetime import datetime` import.
 - Change the signature to:
@@ -88,7 +88,7 @@ Report what you found, then wait for confirmation before editing.
 - Update the module docstring if there is one (there isn't currently —
   don't add one unless you need to).
 
-### `helix_dagster/assets.py`
+### `aimdl_coord_enrichment/assets.py`
 
 Find the one call to `transform_station_to_sample` inside the
 `enriched_pdv_metadata` asset. Change:
@@ -127,12 +127,12 @@ Skip version-selection tests (2, 3, 4) with `pytest.skip` if
 
 ## What NOT to modify
 
-- `helix_dagster/checks.py`
-- `helix_dagster/assets.py` — except the one 3-tuple unpack line
-- `helix_dagster/validation.py`, `matching.py`, `girder_io.py`,
+- `aimdl_coord_enrichment/checks.py`
+- `aimdl_coord_enrichment/assets.py` — except the one 3-tuple unpack line
+- `aimdl_coord_enrichment/validation.py`, `matching.py`, `girder_io.py`,
   `resources.py`, `sensors.py`, `constants.py`, `__init__.py`
 - The YAML file
-- Any file outside `helix_dagster/` or `tests/`
+- Any file outside `aimdl_coord_enrichment/` or `tests/`
 
 ## Success criteria
 
@@ -142,7 +142,7 @@ Run, and confirm each is true:
 source .venv/bin/activate
 pytest tests/test_coordinates.py -v
 pytest tests/ -v    # whole suite still green
-.venv/bin/python -c "from helix_dagster.coordinates import transform_station_to_sample; \
+.venv/bin/python -c "from aimdl_coord_enrichment.coordinates import transform_station_to_sample; \
   print(transform_station_to_sample(10.0, 10.0))"
 # Expect a 3-tuple like (float, float, 'HELIX/v2')
 ```

@@ -6,14 +6,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from dagster import build_asset_context
 
-from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
-from helix_dagster.coord_enrichment.config_snapshot import CoordTransformSnapshot
-from helix_dagster.coord_enrichment.check_support import (
+from aimdl_coord_enrichment.coord_enrichment.config import CoordEnrichmentConfig
+from aimdl_coord_enrichment.coord_enrichment.config_snapshot import CoordTransformSnapshot
+from aimdl_coord_enrichment.coord_enrichment.check_support import (
     evaluate_coord_failures,
     evaluate_provenance_valid,
     evaluate_success_rate,
 )
-from helix_dagster.coord_enrichment.maxima_derived_leaf import (
+from aimdl_coord_enrichment.coord_enrichment.maxima_derived_leaf import (
     enriched_maxima_derived,
 )
 
@@ -127,7 +127,7 @@ def _run_asset(
     tfn = transform_fn or (lambda inst, ver, sx, sy: (25.0, 25.0))
 
     with patch(
-        "helix_dagster.coord_enrichment.maxima_derived_leaf.transform_with_named_version",
+        "aimdl_coord_enrichment.coord_enrichment.maxima_derived_leaf.transform_with_named_version",
         side_effect=tfn,
     ):
         result = enriched_maxima_derived(ctx, config, inventory, snap, girder)
@@ -187,8 +187,8 @@ def test_skips_when_parent_not_enriched():
 
 
 def test_skips_when_stored_prov_identical():
-    from helix_dagster.provenance import build_coord_provenance
-    from helix_dagster import __version__
+    from aimdl_coord_enrichment.provenance import build_coord_provenance
+    from aimdl_coord_enrichment import __version__
 
     stored_prov = build_coord_provenance(
         instrument="MAXIMA",

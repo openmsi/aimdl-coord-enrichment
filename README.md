@@ -169,7 +169,7 @@ pytest tests/ -v
 ### Project structure
 
 ```
-helix_dagster/
+aimdl_coord_enrichment/
 ├── __init__.py          # Dagster Definitions, version, asset/check registration
 ├── assets.py            # Eight-asset DAG definitions
 ├── checks.py            # Six asset checks for data quality surfacing

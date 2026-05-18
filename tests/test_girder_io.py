@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from helix_dagster.girder_io import (
+from aimdl_coord_enrichment.girder_io import (
     fetch_aimdl_datatypes,
     fetch_aimdl_datafiles,
     fetch_all_aimdl_datafiles,

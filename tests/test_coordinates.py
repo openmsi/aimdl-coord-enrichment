@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from helix_dagster.coordinates import (
+from aimdl_coord_enrichment.coordinates import (
     transform_station_to_sample,
     transform_with_named_version,
     _COORD_TRANSFORMER,
@@ -35,7 +35,7 @@ def test_both_none():
 
 def test_missing_transformer(monkeypatch):
     """When _COORD_TRANSFORMER is None, returns (None, None, None)."""
-    import helix_dagster.coordinates as coord_mod
+    import aimdl_coord_enrichment.coordinates as coord_mod
     monkeypatch.setattr(coord_mod, "_COORD_TRANSFORMER", None)
     sx, sy, name = transform_station_to_sample(10.0, 20.0)
     assert sx is None
@@ -119,7 +119,7 @@ def test_transform_with_named_version_none_input_returns_none():
 
 
 def test_transform_with_named_version_missing_transformer_returns_none():
-    import helix_dagster.coordinates as coord_mod
+    import aimdl_coord_enrichment.coordinates as coord_mod
     original = coord_mod._COORD_TRANSFORMER
     try:
         coord_mod._COORD_TRANSFORMER = None

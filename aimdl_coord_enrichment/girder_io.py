@@ -5,7 +5,7 @@ import math
 
 import pandas as pd
 
-from helix_dagster.constants import AIMDL_PAGE_LIMIT
+from aimdl_coord_enrichment.constants import AIMDL_PAGE_LIMIT
 
 
 def list_all_spreadsheet_items(client, folder_id):

@@ -1,4 +1,4 @@
-from helix_dagster.validation import validate_igsn
+from aimdl_coord_enrichment.validation import validate_igsn
 
 
 def test_valid_igsn():

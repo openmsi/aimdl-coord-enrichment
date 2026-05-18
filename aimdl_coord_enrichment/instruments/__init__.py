@@ -22,7 +22,7 @@ in the leaf_data_types set for HELIX here — it is listed as an
 "external" data type that other data types inherit from.
 """
 
-from helix_dagster.instruments.types import (
+from aimdl_coord_enrichment.instruments.types import (
     InstrumentName,
     ItemRole,
     LeafResolution,
@@ -94,8 +94,8 @@ def all_in_scope_data_types() -> frozenset[str]:
 # Dispatch helpers
 # ---------------------------------------------------------------------------
 
-from helix_dagster.instruments import helix as _helix
-from helix_dagster.instruments import maxima as _maxima
+from aimdl_coord_enrichment.instruments import helix as _helix
+from aimdl_coord_enrichment.instruments import maxima as _maxima
 
 
 def resolve_parent_item_id(item: dict, **context) -> str | None:

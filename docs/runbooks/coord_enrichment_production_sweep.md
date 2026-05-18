@@ -103,7 +103,7 @@ Once the dry rehearsal is green, perform the live sweep through the
 Dagster UI. There is no shell-driven entry point — the previous
 `operations/run_live_sweep.sh` had drift defects from issue-23 and
 was retired (see `docs/archive/run_live_sweep/`). The schedules in
-`helix_dagster/schedules.py` already cover automated sweeps; this
+`aimdl_coord_enrichment/schedules.py` already cover automated sweeps; this
 section covers the one-shot interactive sweep an operator drives by
 hand.
 

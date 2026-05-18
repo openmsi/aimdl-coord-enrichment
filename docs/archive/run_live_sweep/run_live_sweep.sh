@@ -98,7 +98,7 @@ EOY
 
     log "launching $job --partition $partition ..."
     if .venv/bin/dagster job launch \
-            -m helix_dagster \
+            -m aimdl_coord_enrichment \
             -j "$job" \
             --partition "$partition" \
             --config "$config_yaml" >> "$LOG" 2>&1; then

@@ -12,7 +12,7 @@
 - Branch: `refactor/issue23-dynamic-partitions`
 - Package version: `0.6.0` (`pyproject.toml`); egg-info on disk is `0.1.0`
   and stale — **must run `pip install -e ".[dev]"` before any test or run**.
-- Python: ≥3.12. Module name `helix_dagster` (`tool.dagster.module_name`).
+- Python: ≥3.12. Module name `aimdl_coord_enrichment` (`tool.dagster.module_name`).
 
 ## 1. DAG inventory — what actually loads
 
@@ -147,7 +147,7 @@ rehearsal.
 ### 2.5 [Latent risk]  Test-isolation in `test_processing.py`
 
 `test_import_coordinates_with_missing_yaml` reloads
-`helix_dagster.coordinates` against a bogus YAML and does not restore it.
+`aimdl_coord_enrichment.coordinates` against a bogus YAML and does not restore it.
 Currently safe under default alphabetical ordering; breaks under
 randomized order. A `monkeypatch.undo()` and re-reload after the test, or
 isolating to a subprocess, would harden it.
@@ -426,20 +426,20 @@ In rough order of cost vs. unblocking value:
 
 When in doubt, read these — they are the contract:
 
-- `helix_dagster/__init__.py` — Definitions registry, job selections.
-- `helix_dagster/assets.py` — spreadsheet DAG + `ExperimentLogConfig`.
-- `helix_dagster/sensors.py` — both sensors; sensors set `run_config` here.
-- `helix_dagster/schedules.py` — all four schedules + the
+- `aimdl_coord_enrichment/__init__.py` — Definitions registry, job selections.
+- `aimdl_coord_enrichment/assets.py` — spreadsheet DAG + `ExperimentLogConfig`.
+- `aimdl_coord_enrichment/sensors.py` — both sensors; sensors set `run_config` here.
+- `aimdl_coord_enrichment/schedules.py` — all four schedules + the
   `_dry_run_config()` helper that lists Config-taking op names per job.
-- `helix_dagster/coord_enrichment/inventory.py` — partition definitions
+- `aimdl_coord_enrichment/coord_enrichment/inventory.py` — partition definitions
   (`MAXIMA_RAW_PARTITIONS`, `MAXIMA_RUN_PARTITIONS`, etc.).
-- `helix_dagster/coord_enrichment/enrichment_leaves.py` — the
+- `aimdl_coord_enrichment/coord_enrichment/enrichment_leaves.py` — the
   multi-partitioned `enriched_maxima_raw` and its scoped
   `fetch_partition_details` calls.
-- `helix_dagster/coord_enrichment/{helix_alpss_leaf,maxima_derived_leaf}.py`
+- `aimdl_coord_enrichment/coord_enrichment/{helix_alpss_leaf,maxima_derived_leaf}.py`
   — the inheritance leaves; they consume
   `enrichable_items_inventory[partition_key]` directly.
-- `helix_dagster/coord_enrichment/overwrite.py` — the four-key write
+- `aimdl_coord_enrichment/coord_enrichment/overwrite.py` — the four-key write
   decision (yaml_sha256, transformer_version, transform_version,
   station_coord_source).
 - `instrument_coordinate_transforms.yaml` — local YAML; HELIX has v1

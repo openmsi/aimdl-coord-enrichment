@@ -17,9 +17,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from dagster import MultiPartitionKey, build_asset_context
 
-from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
-from helix_dagster.coord_enrichment.config_snapshot import CoordTransformSnapshot
-from helix_dagster.coord_enrichment.enrichment_leaves import (
+from aimdl_coord_enrichment.coord_enrichment.config import CoordEnrichmentConfig
+from aimdl_coord_enrichment.coord_enrichment.config_snapshot import CoordTransformSnapshot
+from aimdl_coord_enrichment.coord_enrichment.enrichment_leaves import (
     enriched_maxima_raw,
 )
 
@@ -125,10 +125,10 @@ def _run_asset(
     fake_fetch = _make_fetch_partition_details(mapping)
 
     with patch(
-        "helix_dagster.coord_enrichment.enrichment_leaves.fetch_partition_details",
+        "aimdl_coord_enrichment.coord_enrichment.enrichment_leaves.fetch_partition_details",
         side_effect=fake_fetch,
     ), patch(
-        "helix_dagster.coord_enrichment.enrichment_leaves.transform_station_to_sample",
+        "aimdl_coord_enrichment.coord_enrichment.enrichment_leaves.transform_station_to_sample",
         side_effect=transform_fn or _mock_transform,
     ):
         result = enriched_maxima_raw(ctx, config, snap, girder)

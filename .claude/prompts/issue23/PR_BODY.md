@@ -13,7 +13,7 @@ Closes #23.
   `/aimdl/partition/details?dataType=<dt>&key=<aimdl_key>`, and no
   longer depends on `enrichable_items_inventory` or the provenance
   tagger. Helper `fetch_partition_details` added to
-  `helix_dagster/girder_io.py`.
+  `aimdl_coord_enrichment/girder_io.py`.
 - **Discovery sensor.** New `maxima_raw_discovery_sensor` polls the
   AIMD-L partition index for `xrd_raw`, `xrf_raw`, and
   `xrd_metadata` (≥ 3600 s tick), adds observed run keys to the

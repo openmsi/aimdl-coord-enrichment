@@ -1,6 +1,6 @@
 """Tests for the instruments subpackage registry and dispatch helpers."""
 
-from helix_dagster.instruments import (
+from aimdl_coord_enrichment.instruments import (
     EXTERNAL_LEAF_DATA_TYPES,
     HELIX_DERIVED_DATA_TYPES,
     HELIX_LEAF_DATA_TYPES,

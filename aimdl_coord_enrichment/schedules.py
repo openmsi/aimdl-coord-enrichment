@@ -16,7 +16,7 @@ from dagster import (
     schedule,
 )
 
-from helix_dagster.coord_enrichment import (
+from aimdl_coord_enrichment.coord_enrichment import (
     HELIX_ALPSS_PARTITIONS,
     MAXIMA_DERIVED_PARTITIONS,
     MAXIMA_RAW_PARTITIONS,

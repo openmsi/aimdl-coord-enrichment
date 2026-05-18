@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 import pytest
 from dagster import AssetCheckSeverity, build_asset_context
 
-from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
-from helix_dagster.coord_enrichment.provenance_tagging import (
+from aimdl_coord_enrichment.coord_enrichment.config import CoordEnrichmentConfig
+from aimdl_coord_enrichment.coord_enrichment.provenance_tagging import (
     all_helix_alpss_tagged,
     helix_alpss_provenance_tagged,
 )
@@ -36,7 +36,7 @@ def _run_asset(inventory, girder, *, dry_run=False, pdv_traces=None, monkeypatch
     """Helper to run helix_alpss_provenance_tagged with mocks."""
     if pdv_traces is not None and monkeypatch is not None:
         monkeypatch.setattr(
-            "helix_dagster.coord_enrichment.provenance_tagging.fetch_all_aimdl_datafiles",
+            "aimdl_coord_enrichment.coord_enrichment.provenance_tagging.fetch_all_aimdl_datafiles",
             lambda g, dt: pdv_traces,
         )
     config = CoordEnrichmentConfig(dry_run=dry_run)
@@ -147,7 +147,7 @@ def test_unresolved_adapter_exception_does_not_crash_asset(monkeypatch):
     inv["HELIX/pdv_trace"] = [_make_pdv_trace("pdv1", "dummy.csv")]
 
     monkeypatch.setattr(
-        "helix_dagster.instruments.helix.find_parent_pdv_item_id",
+        "aimdl_coord_enrichment.instruments.helix.find_parent_pdv_item_id",
         lambda item, inv: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     girder = MagicMock()
@@ -205,7 +205,7 @@ def test_fetches_pdv_trace_when_inventory_lacks_key(monkeypatch):
         return pdv_traces
 
     monkeypatch.setattr(
-        "helix_dagster.coord_enrichment.provenance_tagging.fetch_all_aimdl_datafiles",
+        "aimdl_coord_enrichment.coord_enrichment.provenance_tagging.fetch_all_aimdl_datafiles",
         mock_fetch,
     )
 

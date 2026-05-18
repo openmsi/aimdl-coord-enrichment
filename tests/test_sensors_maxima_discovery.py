@@ -10,7 +10,7 @@ from dagster import (
     build_sensor_context,
 )
 
-from helix_dagster.sensors import maxima_raw_discovery_sensor
+from aimdl_coord_enrichment.sensors import maxima_raw_discovery_sensor
 
 
 def _make_indexes(xrd_raw=None, xrf_raw=None, xrd_metadata=None):

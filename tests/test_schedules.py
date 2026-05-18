@@ -9,8 +9,8 @@ from dagster import (
     build_schedule_context,
 )
 
-from helix_dagster import defs
-from helix_dagster.schedules import (
+from aimdl_coord_enrichment import defs
+from aimdl_coord_enrichment.schedules import (
     coord_enrichment_helix_alpss_weekly_schedule,
     coord_enrichment_maxima_derived_weekly_schedule,
     coord_enrichment_maxima_raw_weekly_schedule,

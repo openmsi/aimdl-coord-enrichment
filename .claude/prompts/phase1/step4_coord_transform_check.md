@@ -4,7 +4,7 @@
 
 Branch: `refactor/asset-dag`. Steps 1, 2, 3 are committed.
 
-Read `.claude/CLAUDE.md` and `helix_dagster/checks.py` before editing.
+Read `.claude/CLAUDE.md` and `aimdl_coord_enrichment/checks.py` before editing.
 
 ## Goal
 
@@ -23,7 +23,7 @@ they are obvious in the Dagster UI.
 
 ## Audit phase (report BEFORE editing)
 
-1. Read `helix_dagster/checks.py::coord_transform_check` in full.
+1. Read `aimdl_coord_enrichment/checks.py::coord_transform_check` in full.
 2. Read the updated `enriched_pdv_metadata` asset return dict (after
    Step 3): confirm that `version_counter`, `naive_timestamps_count`,
    and `yaml_sha256` keys are present.
@@ -32,7 +32,7 @@ they are obvious in the Dagster UI.
 
 ## Edits
 
-### `helix_dagster/checks.py::coord_transform_check`
+### `aimdl_coord_enrichment/checks.py::coord_transform_check`
 
 Replace the check body with logic that consumes the extended return
 dict:

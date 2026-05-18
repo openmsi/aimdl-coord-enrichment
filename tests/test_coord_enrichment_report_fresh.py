@@ -15,7 +15,7 @@ from dagster import (
     build_asset_context,
 )
 
-from helix_dagster.coord_enrichment.report import coord_enrichment_report
+from aimdl_coord_enrichment.coord_enrichment.report import coord_enrichment_report
 
 
 def _empty_tagging():

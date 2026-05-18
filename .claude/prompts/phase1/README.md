@@ -15,14 +15,14 @@ coordinate-enrichment DAG's writes are schema-identical.
 
 ## Deliverables
 
-- `helix_dagster/coordinates.py` returns `(sample_x, sample_y, transform_name)`
+- `aimdl_coord_enrichment/coordinates.py` returns `(sample_x, sample_y, transform_name)`
   and accepts an optional timezone-aware timestamp.
-- `helix_dagster/provenance.py` (new module) builds `coord_provenance`
+- `aimdl_coord_enrichment/provenance.py` (new module) builds `coord_provenance`
   payloads and computes the YAML sha256.
-- `helix_dagster/assets.py::enriched_pdv_metadata` parses the spreadsheet
+- `aimdl_coord_enrichment/assets.py::enriched_pdv_metadata` parses the spreadsheet
   `Timestamp` column and writes `coord_provenance` alongside
   Station_X/Y and Sample_X/Y.
-- `helix_dagster/checks.py::coord_transform_check` verifies that the
+- `aimdl_coord_enrichment/checks.py::coord_transform_check` verifies that the
   transform version resolved for every row.
 - New integration test verifying that two rows with different timestamps
   produce different Sample_X/Y values when the transform version changes

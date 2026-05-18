@@ -3,7 +3,7 @@ import math
 
 import numpy as np
 
-from helix_dagster.constants import IGSN_PATTERN
+from aimdl_coord_enrichment.constants import IGSN_PATTERN
 
 
 class NpEncoder(json.JSONEncoder):

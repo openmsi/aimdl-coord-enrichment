@@ -2,7 +2,7 @@ __version__ = "0.6.0"
 
 from dagster import AssetSelection, Definitions, EnvVar, define_asset_job
 
-from helix_dagster.assets import (
+from aimdl_coord_enrichment.assets import (
     alpss_results_inventory,
     enriched_pdv_metadata,
     experiment_log_source,
@@ -14,7 +14,7 @@ from helix_dagster.assets import (
     raw_experiment_log,
     validated_rows,
 )
-from helix_dagster.checks import (
+from aimdl_coord_enrichment.checks import (
     coord_transform_check,
     enrichment_success_rate,
     igsn_consistency,
@@ -22,7 +22,7 @@ from helix_dagster.checks import (
     pdv_match_rate,
     zero_inventory,
 )
-from helix_dagster.coord_enrichment import (
+from aimdl_coord_enrichment.coord_enrichment import (
     coord_enrichment_manifest,
     coord_enrichment_report,
     coord_transform_config_snapshot,
@@ -42,17 +42,17 @@ from helix_dagster.coord_enrichment import (
     no_coord_transform_failures_maxima_raw,
     pdv_coverage_above_threshold,
 )
-from helix_dagster.coord_enrichment.provenance_tagging import (
+from aimdl_coord_enrichment.coord_enrichment.provenance_tagging import (
     all_helix_alpss_tagged,
 )
-from helix_dagster.resources import GirderConnection, GirderCredentials
-from helix_dagster.schedules import (
+from aimdl_coord_enrichment.resources import GirderConnection, GirderCredentials
+from aimdl_coord_enrichment.schedules import (
     coord_enrichment_helix_alpss_weekly_schedule,
     coord_enrichment_maxima_derived_weekly_schedule,
     coord_enrichment_maxima_raw_weekly_schedule,
     coord_enrichment_state_report_schedule,
 )
-from helix_dagster.sensors import (
+from aimdl_coord_enrichment.sensors import (
     helix_folder_sensor,
     maxima_raw_discovery_sensor,
 )

@@ -49,11 +49,11 @@ def test_enriched_pdv_metadata_version_boundary_dispatch():
     from datetime import datetime, timezone
     from unittest.mock import MagicMock
     from dagster import build_asset_context
-    from helix_dagster.assets import (
+    from aimdl_coord_enrichment.assets import (
         enriched_pdv_metadata as enriched_fn,
         ExperimentLogConfig,
     )
-    from helix_dagster.coordinates import _COORD_TRANSFORMER
+    from aimdl_coord_enrichment.coordinates import _COORD_TRANSFORMER
 
     if _COORD_TRANSFORMER is None:
         pytest.skip("COORD_TRANSFORMS_YAML not available")
@@ -143,7 +143,7 @@ approximate agreement — so recompute by hand if needed.
 
 ## What NOT to modify
 
-- Any source file under `helix_dagster/`
+- Any source file under `aimdl_coord_enrichment/`
 - Other tests
 - YAML
 
@@ -183,5 +183,5 @@ Phase 1 is done. The existing DAG now:
 - Surfaces version-resolution failures through coord_transform_check
 
 The next phase (Phase 2) will extract per-instrument adapters into
-`helix_dagster/instruments/`, setting up for MAXIMA support in the
+`aimdl_coord_enrichment/instruments/`, setting up for MAXIMA support in the
 new coordinate-enrichment DAG.

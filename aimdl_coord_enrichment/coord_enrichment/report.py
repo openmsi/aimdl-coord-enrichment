@@ -18,9 +18,9 @@ from dagster import (
     asset,
 )
 
-from helix_dagster.coord_enrichment.helix_alpss_leaf import HELIX_ALPSS_PARTITIONS
-from helix_dagster.coord_enrichment.inventory import MAXIMA_RAW_PARTITIONS
-from helix_dagster.coord_enrichment.maxima_derived_leaf import (
+from aimdl_coord_enrichment.coord_enrichment.helix_alpss_leaf import HELIX_ALPSS_PARTITIONS
+from aimdl_coord_enrichment.coord_enrichment.inventory import MAXIMA_RAW_PARTITIONS
+from aimdl_coord_enrichment.coord_enrichment.maxima_derived_leaf import (
     MAXIMA_DERIVED_PARTITIONS,
 )
 
