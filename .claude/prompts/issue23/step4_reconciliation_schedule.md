@@ -1,6 +1,6 @@
 # Issue 23, Step 4 — Gap-filling reconciliation schedule
 
-Tracking: https://github.com/openmsi/helix_metadata_extraction_dagster/issues/23
+Tracking: https://github.com/openmsi/aimdl-coord-enrichment/issues/23
 
 ## Context
 

@@ -1,4 +1,4 @@
-# CLAUDE.md — helix_metadata_extraction_dagster
+# CLAUDE.md — aimdl-coord-enrichment
 
 ## What this project does
 This is a Dagster pipeline that processes laser shock experiment log spreadsheets

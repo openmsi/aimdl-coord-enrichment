@@ -42,7 +42,7 @@ Run the steps in order. Each step leaves the repo in a passing state
 ## How to invoke each step
 
 ```bash
-cd /Users/elbert/Documents/GitHub/openmsi/helix_metadata_extraction_dagster
+cd /Users/elbert/Documents/GitHub/openmsi/aimdl-coord-enrichment
 claude --model claude-opus-4-6 --dangerously-skip-permissions \
   < .claude/prompts/phase1/stepN_<name>.md
 ```

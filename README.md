@@ -1,4 +1,4 @@
-# helix_metadata_extraction_dagster
+# aimdl-coord-enrichment
 
 A [Dagster](https://dagster.io) pipeline that processes laser shock experiment log
 spreadsheets from the HELIX station in the

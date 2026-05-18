@@ -175,7 +175,7 @@ production unless explicitly intended.
 ### 3.0 One-time setup (3–5 min)
 
 ```bash
-cd /Users/elbert/Documents/GitHub/openmsi/helix_metadata_extraction_dagster
+cd /Users/elbert/Documents/GitHub/openmsi/aimdl-coord-enrichment
 git status                              # confirm clean tree, branch
 source .venv/bin/activate
 pip install -e ".[dev]"                 # refresh stale egg-info

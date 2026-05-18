@@ -1,6 +1,6 @@
 # Issue 23, Step 6 — Provenance split part 2: MAXIMA derived rewiring + new check
 
-Tracking: https://github.com/openmsi/helix_metadata_extraction_dagster/issues/23
+Tracking: https://github.com/openmsi/aimdl-coord-enrichment/issues/23
 
 ## Context
 

@@ -1,6 +1,6 @@
 # Issue 23, Step 1 — girder_io scoped partition helpers
 
-Tracking: https://github.com/openmsi/helix_metadata_extraction_dagster/issues/23
+Tracking: https://github.com/openmsi/aimdl-coord-enrichment/issues/23
 
 ## Context
 

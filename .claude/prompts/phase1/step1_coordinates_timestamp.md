@@ -3,7 +3,7 @@
 ## Context
 
 Branch: `refactor/asset-dag`
-Repo: `/Users/elbert/Documents/GitHub/openmsi/helix_metadata_extraction_dagster`
+Repo: `/Users/elbert/Documents/GitHub/openmsi/aimdl-coord-enrichment`
 Python 3.12, `.venv` in repo root. Activate before running anything.
 
 Read `.claude/CLAUDE.md` first — apply its ground rules (audit before
