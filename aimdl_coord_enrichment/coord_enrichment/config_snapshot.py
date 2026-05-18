@@ -10,8 +10,8 @@ from typing import Any
 
 from dagster import AssetExecutionContext, MetadataValue, asset
 
-from helix_dagster.coordinates import _COORD_TRANSFORMER, _COORD_YAML
-from helix_dagster.provenance import compute_yaml_sha256, get_transformer_version
+from aimdl_coord_enrichment.coordinates import _COORD_TRANSFORMER, _COORD_YAML
+from aimdl_coord_enrichment.provenance import compute_yaml_sha256, get_transformer_version
 
 
 @dataclass(frozen=True)

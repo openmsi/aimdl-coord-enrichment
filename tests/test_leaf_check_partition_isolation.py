@@ -28,11 +28,11 @@ from dagster import DagsterInstance, MultiPartitionKey, materialize
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-from helix_dagster.coord_enrichment.config_snapshot import (
+from aimdl_coord_enrichment.coord_enrichment.config_snapshot import (
     _COORD_TRANSFORMER,
     coord_transform_config_snapshot,
 )
-from helix_dagster.coord_enrichment.enrichment_leaves import (
+from aimdl_coord_enrichment.coord_enrichment.enrichment_leaves import (
     enriched_maxima_raw,
     enrichment_success_rate_maxima_raw,
     no_coord_transform_failures_maxima_raw,
@@ -97,11 +97,11 @@ def test_partition_job_succeeds_with_unmaterialized_sibling_partition():
         girder = _girder_mock()
 
         with patch(
-            "helix_dagster.coord_enrichment.enrichment_leaves."
+            "aimdl_coord_enrichment.coord_enrichment.enrichment_leaves."
             "fetch_partition_details",
             side_effect=_fetch_partition_details,
         ), patch(
-            "helix_dagster.coord_enrichment.enrichment_leaves."
+            "aimdl_coord_enrichment.coord_enrichment.enrichment_leaves."
             "transform_station_to_sample",
             side_effect=lambda sx, sy, instrument="MAXIMA", timestamp=None: (
                 sx + 1.0,

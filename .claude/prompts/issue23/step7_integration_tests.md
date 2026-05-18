@@ -1,6 +1,6 @@
 # Issue 23, Step 7 — Integration and E2E test reconciliation
 
-Tracking: https://github.com/openmsi/helix_metadata_extraction_dagster/issues/23
+Tracking: https://github.com/openmsi/aimdl-coord-enrichment/issues/23
 
 ## Context
 
@@ -22,9 +22,9 @@ Before editing, read:
 
 Also read, for reference:
 
-- `helix_dagster/__init__.py` (the current Definitions)
-- `helix_dagster/coord_enrichment/` (all assets)
-- `helix_dagster/sensors.py`, `helix_dagster/schedules.py`
+- `aimdl_coord_enrichment/__init__.py` (the current Definitions)
+- `aimdl_coord_enrichment/coord_enrichment/` (all assets)
+- `aimdl_coord_enrichment/sensors.py`, `aimdl_coord_enrichment/schedules.py`
 
 ## Why this step
 
@@ -114,7 +114,7 @@ instance.add_dynamic_partitions("maxima_raw_run", ["JHAMAB00001//2026-04-16"])
 Tests that previously mocked `enrichable_items_inventory` to feed
 `enriched_maxima_raw` must now mock `fetch_partition_details`
 directly (monkeypatch
-`helix_dagster.coord_enrichment.enrichment_leaves.fetch_partition_details`).
+`aimdl_coord_enrichment.coord_enrichment.enrichment_leaves.fetch_partition_details`).
 Return per-`(data_type, key)` item lists. Include an
 `xrd_metadata` key that returns a minimal instructions.txt item.
 

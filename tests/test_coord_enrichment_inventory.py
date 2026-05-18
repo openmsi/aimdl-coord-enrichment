@@ -1,4 +1,4 @@
-"""Tests for helix_dagster.coord_enrichment.inventory."""
+"""Tests for aimdl_coord_enrichment.coord_enrichment.inventory."""
 
 import logging
 from unittest.mock import MagicMock, patch
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from dagster import build_asset_context
 
-from helix_dagster.coord_enrichment.inventory import (
+from aimdl_coord_enrichment.coord_enrichment.inventory import (
     MAXIMA_RAW_PARTITIONS,
     PARTITION_AWARE_DATA_TYPES,
     _is_in_scope,
@@ -14,7 +14,7 @@ from helix_dagster.coord_enrichment.inventory import (
     filter_to_raw_subfolder,
     inventory_nonempty_per_instrument,
 )
-from helix_dagster.instruments import all_in_scope_data_types, instrument_for_data_type
+from aimdl_coord_enrichment.instruments import all_in_scope_data_types, instrument_for_data_type
 
 
 def _make_item(data_type, igsn=None, **extra_meta):
@@ -28,8 +28,8 @@ def _make_item(data_type, igsn=None, **extra_meta):
 # ── enrichable_items_inventory ──────────────────────────────────────
 
 
-@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
-@patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_items_by_partition")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
 def test_inventory_returns_all_in_scope_data_type_keys(mock_datafiles, mock_partition):
     mock_datafiles.return_value = []
     mock_partition.return_value = []
@@ -47,8 +47,8 @@ def test_inventory_returns_all_in_scope_data_type_keys(mock_datafiles, mock_part
         assert v == []
 
 
-@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
-@patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_items_by_partition")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
 def test_inventory_filters_out_missing_igsn(mock_datafiles, mock_partition):
     def partition_side_effect(_client, dt):
         if dt == "xrd_raw":
@@ -68,8 +68,8 @@ def test_inventory_filters_out_missing_igsn(mock_datafiles, mock_partition):
     assert len(result["MAXIMA/xrd_raw"]) == 1
 
 
-@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
-@patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_items_by_partition")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
 def test_inventory_keeps_items_with_igsn(mock_datafiles, mock_partition):
     def partition_side_effect(_client, dt):
         if dt == "xrf_raw":
@@ -87,8 +87,8 @@ def test_inventory_keeps_items_with_igsn(mock_datafiles, mock_partition):
     assert result["MAXIMA/xrf_raw"][0]["meta"]["igsn"] == "JHAMAB00002"
 
 
-@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
-@patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_items_by_partition")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
 def test_inventory_key_format_is_instrument_slash_data_type(
     mock_datafiles, mock_partition,
 ):
@@ -107,8 +107,8 @@ def test_inventory_key_format_is_instrument_slash_data_type(
         assert dt in all_in_scope_data_types()
 
 
-@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
-@patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_items_by_partition")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
 def test_inventory_logs_per_data_type_counts(
     mock_datafiles, mock_partition, capsys,
 ):
@@ -125,8 +125,8 @@ def test_inventory_logs_per_data_type_counts(
     # test log capture is wired up.
 
 
-@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
-@patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_items_by_partition")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
 def test_inventory_uses_partition_api_for_maxima_types(
     mock_datafiles, mock_partition,
 ):
@@ -148,8 +148,8 @@ def test_inventory_uses_partition_api_for_maxima_types(
     assert datafiles_dts.isdisjoint(PARTITION_AWARE_DATA_TYPES)
 
 
-@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
-@patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_items_by_partition")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
 def test_inventory_uses_datafiles_for_helix(mock_datafiles, mock_partition):
     """HELIX data types (pdv_alpss_*) still use /aimdl/datafiles."""
     mock_datafiles.return_value = []
@@ -165,8 +165,8 @@ def test_inventory_uses_datafiles_for_helix(mock_datafiles, mock_partition):
     assert helix_dts <= datafiles_dts
 
 
-@patch("helix_dagster.coord_enrichment.inventory.fetch_items_by_partition")
-@patch("helix_dagster.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_items_by_partition")
+@patch("aimdl_coord_enrichment.coord_enrichment.inventory.fetch_all_aimdl_datafiles")
 def test_items_carry_full_meta_through_inventory(mock_datafiles, mock_partition):
     """Regression: partition-sourced items keep full meta (experiment_date)."""
     def partition_side_effect(_client, dt):
@@ -293,7 +293,7 @@ def test_xrd_derived_filter_logs_drop_counts(caplog):
 
     girder.get.side_effect = get_folder
 
-    with caplog.at_level(logging.INFO, logger="helix_dagster.coord_enrichment.inventory"):
+    with caplog.at_level(logging.INFO, logger="aimdl_coord_enrichment.coord_enrichment.inventory"):
         filter_to_raw_subfolder([raw_item, root_item], girder)
 
     assert any("kept 1 in-raw" in msg for msg in caplog.messages)
@@ -313,7 +313,7 @@ def test_xrd_derived_filter_handles_fetch_failure(caplog):
 
     girder.get.side_effect = get_folder
 
-    with caplog.at_level(logging.WARNING, logger="helix_dagster.coord_enrichment.inventory"):
+    with caplog.at_level(logging.WARNING, logger="aimdl_coord_enrichment.coord_enrichment.inventory"):
         result = filter_to_raw_subfolder([ok_item, bad_item], girder)
 
     assert len(result) == 1

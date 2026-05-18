@@ -5,12 +5,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from helix_dagster.coord_enrichment.inheritance import (
+from aimdl_coord_enrichment.coord_enrichment.inheritance import (
     InheritedCoords,
     inherit_from_parent,
     inherited_station_coord_source,
 )
-from helix_dagster.instruments.types import ResolutionError
+from aimdl_coord_enrichment.instruments.types import ResolutionError
 
 
 def _parent(

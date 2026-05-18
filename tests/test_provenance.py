@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from helix_dagster.provenance import (
+from aimdl_coord_enrichment.provenance import (
     build_coord_provenance,
     compute_yaml_sha256,
     get_transformer_version,

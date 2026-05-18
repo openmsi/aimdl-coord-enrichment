@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from helix_dagster.instruments import (
+from aimdl_coord_enrichment.instruments import (
     resolve_leaf,
     resolve_parent_item_id,
 )

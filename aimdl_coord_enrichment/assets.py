@@ -11,18 +11,18 @@ from dagster import (
     define_asset_job,
 )
 
-from helix_dagster import __version__ as PIPELINE_VERSION
-from helix_dagster.constants import ALPSS_RESULT_DATA_TYPE, COLUMN_MAP, PDV_TRACE_DATA_TYPE
-from helix_dagster.coordinates import _COORD_YAML, transform_station_to_sample
-from helix_dagster.girder_io import download_and_read, fetch_all_aimdl_datafiles, nan_to_none
-from helix_dagster.matching import match_pdv_file
-from helix_dagster.provenance import (
+from aimdl_coord_enrichment import __version__ as PIPELINE_VERSION
+from aimdl_coord_enrichment.constants import ALPSS_RESULT_DATA_TYPE, COLUMN_MAP, PDV_TRACE_DATA_TYPE
+from aimdl_coord_enrichment.coordinates import _COORD_YAML, transform_station_to_sample
+from aimdl_coord_enrichment.girder_io import download_and_read, fetch_all_aimdl_datafiles, nan_to_none
+from aimdl_coord_enrichment.matching import match_pdv_file
+from aimdl_coord_enrichment.provenance import (
     build_coord_provenance,
     compute_yaml_sha256,
     get_transformer_version,
 )
-from helix_dagster.resources import GirderConnection
-from helix_dagster.validation import NpEncoder, validate_igsn
+from aimdl_coord_enrichment.resources import GirderConnection
+from aimdl_coord_enrichment.validation import NpEncoder, validate_igsn
 
 
 class ExperimentLogConfig(Config):

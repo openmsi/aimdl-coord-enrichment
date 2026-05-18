@@ -25,7 +25,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from helix_dagster.instruments.types import LeafResolution, ResolutionError
+from aimdl_coord_enrichment.instruments.types import LeafResolution, ResolutionError
 
 _SCAN_POINT_INDEX_RE = re.compile(r"^scan_point_(\d+)(?:[._]|$)")
 

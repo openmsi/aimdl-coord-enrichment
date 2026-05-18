@@ -20,16 +20,16 @@ from dagster import (
     build_asset_context,
 )
 
-from helix_dagster.coordinates import _COORD_TRANSFORMER
-from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
-from helix_dagster.coord_enrichment.config_snapshot import CoordTransformSnapshot
-from helix_dagster.coord_enrichment.enrichment_leaves import enriched_maxima_raw
-from helix_dagster.coord_enrichment.manifest import coord_enrichment_manifest
-from helix_dagster.coord_enrichment.pdv_observer import helix_pdv_coverage_observer
-from helix_dagster.coord_enrichment.provenance_tagging import (
+from aimdl_coord_enrichment.coordinates import _COORD_TRANSFORMER
+from aimdl_coord_enrichment.coord_enrichment.config import CoordEnrichmentConfig
+from aimdl_coord_enrichment.coord_enrichment.config_snapshot import CoordTransformSnapshot
+from aimdl_coord_enrichment.coord_enrichment.enrichment_leaves import enriched_maxima_raw
+from aimdl_coord_enrichment.coord_enrichment.manifest import coord_enrichment_manifest
+from aimdl_coord_enrichment.coord_enrichment.pdv_observer import helix_pdv_coverage_observer
+from aimdl_coord_enrichment.coord_enrichment.provenance_tagging import (
     helix_alpss_provenance_tagged,
 )
-from helix_dagster.coord_enrichment.report import coord_enrichment_report
+from aimdl_coord_enrichment.coord_enrichment.report import coord_enrichment_report
 
 FIXTURES = Path(__file__).parent / "fixtures"
 EXAMPLE_TS = datetime(2026, 4, 16, 16, 56, 16, tzinfo=timezone.utc)
@@ -169,7 +169,7 @@ def _run_full_dag(xrd_items, xrf_items, girder_mock):
 
         tagging_ctx = build_asset_context(instance=instance)
         with patch(
-            "helix_dagster.coord_enrichment.provenance_tagging.fetch_all_aimdl_datafiles",
+            "aimdl_coord_enrichment.coord_enrichment.provenance_tagging.fetch_all_aimdl_datafiles",
             return_value=[],
         ):
             tagging_result = helix_alpss_provenance_tagged(
@@ -194,10 +194,10 @@ def _run_full_dag(xrd_items, xrf_items, girder_mock):
                 partition_key=partition_key, instance=instance,
             )
             with patch(
-                "helix_dagster.coord_enrichment.enrichment_leaves.fetch_partition_details",
+                "aimdl_coord_enrichment.coord_enrichment.enrichment_leaves.fetch_partition_details",
                 side_effect=_fake_fetch,
             ), patch(
-                "helix_dagster.coord_enrichment.enrichment_leaves.transform_station_to_sample",
+                "aimdl_coord_enrichment.coord_enrichment.enrichment_leaves.transform_station_to_sample",
                 side_effect=_mock_transform,
             ):
                 leaf_result = enriched_maxima_raw(
@@ -211,7 +211,7 @@ def _run_full_dag(xrd_items, xrf_items, girder_mock):
 
         observer_ctx = build_asset_context(instance=instance)
         with patch(
-            "helix_dagster.coord_enrichment.pdv_observer.fetch_all_aimdl_datafiles",
+            "aimdl_coord_enrichment.coord_enrichment.pdv_observer.fetch_all_aimdl_datafiles",
             return_value=[],
         ):
             observer_result = helix_pdv_coverage_observer(observer_ctx, girder_mock)

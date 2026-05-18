@@ -7,11 +7,11 @@ import pandas as pd
 import pytest
 from dagster import build_asset_context
 
-from helix_dagster.assets import (
+from aimdl_coord_enrichment.assets import (
     validated_rows as validated_rows_fn,
     pdv_cross_references as pdv_cross_references_fn,
 )
-from helix_dagster.coordinates import _COORD_TRANSFORMER
+from aimdl_coord_enrichment.coordinates import _COORD_TRANSFORMER
 
 
 def test_validated_rows_pure():
@@ -92,7 +92,7 @@ def test_pdv_cross_references_pure():
 
 def test_asset_dag_loads():
     """Verify the Dagster Definitions object loads with all assets and checks."""
-    from helix_dagster import defs
+    from aimdl_coord_enrichment import defs
 
     repo = defs.get_repository_def()
     asset_keys = {ak.to_user_string() for ak in repo.asset_graph.get_all_asset_keys()}
@@ -125,7 +125,7 @@ def test_helix_folder_sensor_run_config_validates():
     only `raw_experiment_log` while three ops took ExperimentLogConfig.
     """
     from dagster import validate_run_config
-    from helix_dagster import defs
+    from aimdl_coord_enrichment import defs
 
     job = defs.resolve_job_def("process_helix_assets_job")
 
@@ -188,7 +188,7 @@ def test_quality_report_alpss_completeness():
     ]
 
     ctx = build_asset_context()
-    from helix_dagster.assets import quality_report as quality_report_fn
+    from aimdl_coord_enrichment.assets import quality_report as quality_report_fn
     report = quality_report_fn(
         context=ctx,
         validated_rows=validated,
@@ -205,7 +205,7 @@ def test_quality_report_alpss_completeness():
 def test_processing_manifest_clean():
     """Test manifest for a run with no issues."""
     from unittest.mock import MagicMock
-    from helix_dagster.assets import processing_manifest as manifest_fn
+    from aimdl_coord_enrichment.assets import processing_manifest as manifest_fn
 
     df = pd.DataFrame([
         {"Sample_IGSN": "ABCDEF12345", "PDV_FileName": "shot001",
@@ -244,7 +244,7 @@ def test_processing_manifest_clean():
 def test_processing_manifest_with_warnings():
     """Test manifest for a run with issues."""
     from unittest.mock import MagicMock
-    from helix_dagster.assets import processing_manifest as manifest_fn
+    from aimdl_coord_enrichment.assets import processing_manifest as manifest_fn
 
     df = pd.DataFrame([
         {"Sample_IGSN": "INVALID", "PDV_FileName": "shot001",
@@ -286,7 +286,7 @@ def test_enriched_pdv_metadata_writes_provenance():
     if _COORD_TRANSFORMER is None:
         pytest.skip("CoordinateTransformer unavailable (YAML missing)")
 
-    from helix_dagster.assets import (
+    from aimdl_coord_enrichment.assets import (
         enriched_pdv_metadata as enrich_fn,
     )
 
@@ -349,10 +349,10 @@ def test_enriched_pdv_metadata_version_boundary_dispatch():
     from datetime import datetime, timezone
     from unittest.mock import MagicMock
     from dagster import build_asset_context
-    from helix_dagster.assets import (
+    from aimdl_coord_enrichment.assets import (
         enriched_pdv_metadata as enriched_fn,
     )
-    from helix_dagster.coordinates import _COORD_TRANSFORMER
+    from aimdl_coord_enrichment.coordinates import _COORD_TRANSFORMER
 
     if _COORD_TRANSFORMER is None:
         pytest.skip("COORD_TRANSFORMS_YAML not available")

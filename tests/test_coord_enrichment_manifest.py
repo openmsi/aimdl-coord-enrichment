@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 import pytest
 from dagster import build_asset_context
 
-from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
-from helix_dagster.coord_enrichment.manifest import coord_enrichment_manifest
+from aimdl_coord_enrichment.coord_enrichment.config import CoordEnrichmentConfig
+from aimdl_coord_enrichment.coord_enrichment.manifest import coord_enrichment_manifest
 
 
 def _make_girder_mock():

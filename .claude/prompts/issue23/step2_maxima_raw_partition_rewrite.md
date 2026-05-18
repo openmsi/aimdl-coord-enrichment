@@ -1,24 +1,24 @@
 # Issue 23, Step 2 — MAXIMA raw: new partition def + asset rewrite
 
-Tracking: https://github.com/openmsi/helix_metadata_extraction_dagster/issues/23
+Tracking: https://github.com/openmsi/aimdl-coord-enrichment/issues/23
 
 ## Context
 
 Branch: `refactor/issue23-dynamic-partitions`. Steps 0 and 1 complete.
-`helix_dagster/girder_io.py` now exposes `fetch_partition_index` and
+`aimdl_coord_enrichment/girder_io.py` now exposes `fetch_partition_index` and
 `fetch_partition_details`.
 
 Before editing, read:
 
 - `.claude/CLAUDE.md`
 - `.claude/prompts/issue23/README.md` (the invariants section)
-- `helix_dagster/coord_enrichment/inventory.py`
-- `helix_dagster/coord_enrichment/enrichment_leaves.py`
-- `helix_dagster/coord_enrichment/__init__.py`
-- `helix_dagster/__init__.py` (for Definitions and jobs)
-- `helix_dagster/schedules.py`
-- `helix_dagster/instruments/maxima.py` (for `parse_scan_point_index`, `parse_instructions_json`, `scan_point_coords`)
-- `helix_dagster/girder_io.py` (new helpers from Step 1)
+- `aimdl_coord_enrichment/coord_enrichment/inventory.py`
+- `aimdl_coord_enrichment/coord_enrichment/enrichment_leaves.py`
+- `aimdl_coord_enrichment/coord_enrichment/__init__.py`
+- `aimdl_coord_enrichment/__init__.py` (for Definitions and jobs)
+- `aimdl_coord_enrichment/schedules.py`
+- `aimdl_coord_enrichment/instruments/maxima.py` (for `parse_scan_point_index`, `parse_instructions_json`, `scan_point_coords`)
+- `aimdl_coord_enrichment/girder_io.py` (new helpers from Step 1)
 - `tests/test_coord_enrichment_maxima_raw.py`
 - `tests/test_schedules.py`
 - `tests/test_coord_enrichment_partitioned_jobs.py`
@@ -74,7 +74,7 @@ and the sensor arrives in the next step.
 
 ## Edits
 
-### 1. `helix_dagster/coord_enrichment/inventory.py`
+### 1. `aimdl_coord_enrichment/coord_enrichment/inventory.py`
 
 Replace the `MAXIMA_RAW_PARTITIONS` definition. Add the two
 component partition defs alongside. Keep imports minimal (don't
@@ -115,13 +115,13 @@ flatten them via `fetch_items_by_partition`, because
 `provenance_tagged_items` and downstream reports still consume
 those flattened slices. That cleanup, if any, is out of scope here.
 
-### 2. `helix_dagster/coord_enrichment/__init__.py`
+### 2. `aimdl_coord_enrichment/coord_enrichment/__init__.py`
 
 Export the two new partition defs alongside the existing
 `MAXIMA_RAW_PARTITIONS`:
 
 ```python
-from helix_dagster.coord_enrichment.inventory import (
+from aimdl_coord_enrichment.coord_enrichment.inventory import (
     MAXIMA_RAW_DATA_TYPE_PARTITIONS,
     MAXIMA_RAW_PARTITIONS,
     MAXIMA_RUN_PARTITIONS,
@@ -131,7 +131,7 @@ from helix_dagster.coord_enrichment.inventory import (
 
 Update `__all__` to include both new names.
 
-### 3. `helix_dagster/coord_enrichment/enrichment_leaves.py` — rewrite `enriched_maxima_raw`
+### 3. `aimdl_coord_enrichment/coord_enrichment/enrichment_leaves.py` — rewrite `enriched_maxima_raw`
 
 The per-item processing code (scan point parse, transform,
 provenance build, overwrite, write) stays the same. What changes is
@@ -248,12 +248,12 @@ Key points for the rewrite:
   changes — they read from the returned dict, whose shape is
   preserved.
 - Add `fetch_partition_details` to the imports from
-  `helix_dagster.girder_io`.
+  `aimdl_coord_enrichment.girder_io`.
 
 Update the module docstring to say the asset is partitioned on the
 new MultiPartitionsDefinition.
 
-### 4. `helix_dagster/__init__.py`
+### 4. `aimdl_coord_enrichment/__init__.py`
 
 Slim `coord_enrichment_maxima_raw_job` — `enriched_maxima_raw` no
 longer depends on the inventory or provenance assets, so they
@@ -273,7 +273,7 @@ The other two jobs (`coord_enrichment_helix_alpss_job`,
 `coord_enrichment_maxima_derived_job`) are unchanged here. They'll
 be revisited in Steps 5–6.
 
-### 5. `helix_dagster/schedules.py`
+### 5. `aimdl_coord_enrichment/schedules.py`
 
 Two changes:
 
@@ -347,7 +347,7 @@ Cover at minimum these cases:
 - Dry run: `config.dry_run=True` → counts.simulated_dry_run
   increments, no `addMetadataToItem` calls.
 
-Use `monkeypatch` on `helix_dagster.coord_enrichment.enrichment_leaves.fetch_partition_details`
+Use `monkeypatch` on `aimdl_coord_enrichment.coord_enrichment.enrichment_leaves.fetch_partition_details`
 to inject per-call return values based on `(data_type, key)` args.
 
 ### 7. `tests/test_schedules.py`
@@ -390,11 +390,11 @@ Full suite must pass. Pay special attention to:
 ## Commit
 
 ```
-git add helix_dagster/coord_enrichment/inventory.py \
-        helix_dagster/coord_enrichment/__init__.py \
-        helix_dagster/coord_enrichment/enrichment_leaves.py \
-        helix_dagster/__init__.py \
-        helix_dagster/schedules.py \
+git add aimdl_coord_enrichment/coord_enrichment/inventory.py \
+        aimdl_coord_enrichment/coord_enrichment/__init__.py \
+        aimdl_coord_enrichment/coord_enrichment/enrichment_leaves.py \
+        aimdl_coord_enrichment/__init__.py \
+        aimdl_coord_enrichment/schedules.py \
         tests/test_coord_enrichment_maxima_raw.py \
         tests/test_schedules.py \
         tests/test_coord_enrichment_partitioned_jobs.py \

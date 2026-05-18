@@ -24,17 +24,17 @@ from dagster import (
     build_asset_context,
 )
 
-from helix_dagster.coordinates import _COORD_TRANSFORMER
-from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
-from helix_dagster.coord_enrichment.config_snapshot import (
+from aimdl_coord_enrichment.coordinates import _COORD_TRANSFORMER
+from aimdl_coord_enrichment.coord_enrichment.config import CoordEnrichmentConfig
+from aimdl_coord_enrichment.coord_enrichment.config_snapshot import (
     CoordTransformSnapshot,
     coord_transform_config_snapshot,
 )
-from helix_dagster.coord_enrichment.helix_alpss_leaf import enriched_helix_alpss
-from helix_dagster.coord_enrichment.maxima_derived_leaf import enriched_maxima_derived
-from helix_dagster.coord_enrichment.pdv_observer import helix_pdv_coverage_observer
-from helix_dagster.coord_enrichment.report import coord_enrichment_report
-from helix_dagster.coord_enrichment.manifest import coord_enrichment_manifest
+from aimdl_coord_enrichment.coord_enrichment.helix_alpss_leaf import enriched_helix_alpss
+from aimdl_coord_enrichment.coord_enrichment.maxima_derived_leaf import enriched_maxima_derived
+from aimdl_coord_enrichment.coord_enrichment.pdv_observer import helix_pdv_coverage_observer
+from aimdl_coord_enrichment.coord_enrichment.report import coord_enrichment_report
+from aimdl_coord_enrichment.coord_enrichment.manifest import coord_enrichment_manifest
 
 EXAMPLE_TS = datetime(2026, 3, 15, 10, 0, 0, tzinfo=timezone.utc)
 TRACKING_ITEM_ID = "fake-tracking-item-phase4"
@@ -234,7 +234,7 @@ def _run_phase4_dag(girder_mock):
         ]:
             ctx = build_asset_context(partition_key=pkey, instance=instance)
             with patch(
-                "helix_dagster.coord_enrichment.helix_alpss_leaf."
+                "aimdl_coord_enrichment.coord_enrichment.helix_alpss_leaf."
                 "transform_with_named_version",
                 side_effect=_mock_transform_any,
             ):
@@ -250,7 +250,7 @@ def _run_phase4_dag(girder_mock):
         for pkey in ["MAXIMA/xrd_derived"]:
             ctx = build_asset_context(partition_key=pkey, instance=instance)
             with patch(
-                "helix_dagster.coord_enrichment.maxima_derived_leaf."
+                "aimdl_coord_enrichment.coord_enrichment.maxima_derived_leaf."
                 "transform_with_named_version",
                 side_effect=_mock_transform_any,
             ):
@@ -264,7 +264,7 @@ def _run_phase4_dag(girder_mock):
 
         observer_ctx = build_asset_context(instance=instance)
         with patch(
-            "helix_dagster.coord_enrichment.pdv_observer.fetch_all_aimdl_datafiles",
+            "aimdl_coord_enrichment.coord_enrichment.pdv_observer.fetch_all_aimdl_datafiles",
             return_value=[PDV_TRACE_ITEM],
         ):
             observer_result = helix_pdv_coverage_observer(observer_ctx, girder_mock)

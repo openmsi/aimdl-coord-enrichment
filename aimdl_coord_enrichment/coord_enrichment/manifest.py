@@ -6,9 +6,9 @@ from typing import Any
 
 from dagster import AssetExecutionContext, MetadataValue, asset
 
-from helix_dagster import __version__ as PIPELINE_VERSION
-from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
-from helix_dagster.resources import GirderConnection
+from aimdl_coord_enrichment import __version__ as PIPELINE_VERSION
+from aimdl_coord_enrichment.coord_enrichment.config import CoordEnrichmentConfig
+from aimdl_coord_enrichment.resources import GirderConnection
 
 
 @asset

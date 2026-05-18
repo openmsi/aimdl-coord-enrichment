@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
 
-from helix_dagster.instruments.types import ResolutionError
+from aimdl_coord_enrichment.instruments.types import ResolutionError
 
 
 @dataclass(frozen=True)

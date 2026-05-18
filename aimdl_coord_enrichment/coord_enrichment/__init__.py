@@ -20,11 +20,11 @@ Module layout (populated across Phase 3 steps):
   manifest.py            — coord_enrichment_manifest asset
 """
 
-from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
-from helix_dagster.coord_enrichment.config_snapshot import (
+from aimdl_coord_enrichment.coord_enrichment.config import CoordEnrichmentConfig
+from aimdl_coord_enrichment.coord_enrichment.config_snapshot import (
     coord_transform_config_snapshot,
 )
-from helix_dagster.coord_enrichment.inventory import (
+from aimdl_coord_enrichment.coord_enrichment.inventory import (
     MAXIMA_RAW_DATA_TYPE_PARTITIONS,
     MAXIMA_RAW_PARTITIONS,
     MAXIMA_RUN_PARTITIONS,
@@ -32,40 +32,40 @@ from helix_dagster.coord_enrichment.inventory import (
     filter_to_raw_subfolder,
     inventory_nonempty_per_instrument,
 )
-from helix_dagster.coord_enrichment.provenance_tagging import (
+from aimdl_coord_enrichment.coord_enrichment.provenance_tagging import (
     all_helix_alpss_tagged,
     helix_alpss_provenance_tagged,
 )
-from helix_dagster.coord_enrichment.enrichment_leaves import (
+from aimdl_coord_enrichment.coord_enrichment.enrichment_leaves import (
     enriched_maxima_raw,
     enrichment_success_rate_maxima_raw,
     no_coord_transform_failures_maxima_raw,
 )
-from helix_dagster.coord_enrichment.inheritance import (
+from aimdl_coord_enrichment.coord_enrichment.inheritance import (
     InheritedCoords,
     inherit_from_parent,
     inherited_station_coord_source,
 )
-from helix_dagster.coord_enrichment.helix_alpss_leaf import (
+from aimdl_coord_enrichment.coord_enrichment.helix_alpss_leaf import (
     HELIX_ALPSS_PARTITIONS,
     enriched_helix_alpss,
     enrichment_success_rate_helix_alpss,
     no_coord_transform_failures_helix_alpss,
 )
-from helix_dagster.coord_enrichment.maxima_derived_leaf import (
+from aimdl_coord_enrichment.coord_enrichment.maxima_derived_leaf import (
     MAXIMA_DERIVED_PARTITIONS,
     enriched_maxima_derived,
     enrichment_success_rate_maxima_derived,
     maxima_xrd_derived_provenance_valid,
     no_coord_transform_failures_maxima_derived,
 )
-from helix_dagster.coord_enrichment.pdv_observer import (
+from aimdl_coord_enrichment.coord_enrichment.pdv_observer import (
     helix_pdv_coverage_observer,
     pdv_coverage_above_threshold,
 )
-from helix_dagster.coord_enrichment.overwrite import should_write
-from helix_dagster.coord_enrichment.report import coord_enrichment_report
-from helix_dagster.coord_enrichment.manifest import coord_enrichment_manifest
+from aimdl_coord_enrichment.coord_enrichment.overwrite import should_write
+from aimdl_coord_enrichment.coord_enrichment.report import coord_enrichment_report
+from aimdl_coord_enrichment.coord_enrichment.manifest import coord_enrichment_manifest
 
 __all__ = [
     "CoordEnrichmentConfig",

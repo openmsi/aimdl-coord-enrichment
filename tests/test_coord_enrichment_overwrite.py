@@ -2,7 +2,7 @@
 
 import pytest
 
-from helix_dagster.coord_enrichment.overwrite import should_write
+from aimdl_coord_enrichment.coord_enrichment.overwrite import should_write
 
 
 def _base_prov(**overrides):

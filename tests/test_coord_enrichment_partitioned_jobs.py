@@ -3,7 +3,7 @@
 import pytest
 from dagster import AssetKey, DagsterInstance, MultiPartitionsDefinition
 
-from helix_dagster import defs
+from aimdl_coord_enrichment import defs
 
 REPO = defs.get_repository_def()
 
@@ -108,6 +108,6 @@ def test_defs_loads_without_errors():
 
 
 def test_version_is_0_6_0():
-    import helix_dagster
+    import aimdl_coord_enrichment
 
-    assert helix_dagster.__version__ == "0.6.0"
+    assert aimdl_coord_enrichment.__version__ == "0.6.0"

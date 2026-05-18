@@ -1,6 +1,6 @@
 # Issue 23, Step 4 — Gap-filling reconciliation schedule
 
-Tracking: https://github.com/openmsi/helix_metadata_extraction_dagster/issues/23
+Tracking: https://github.com/openmsi/aimdl-coord-enrichment/issues/23
 
 ## Context
 
@@ -12,8 +12,8 @@ to fill in the gaps that the sensor might have missed.
 Before editing, read:
 
 - `.claude/CLAUDE.md`
-- `helix_dagster/schedules.py`
-- `helix_dagster/coord_enrichment/inventory.py` (for `MAXIMA_RAW_PARTITIONS`)
+- `aimdl_coord_enrichment/schedules.py`
+- `aimdl_coord_enrichment/coord_enrichment/inventory.py` (for `MAXIMA_RAW_PARTITIONS`)
 - `tests/test_schedules.py`
 - Whatever Dagster version is installed (check `pyproject.toml`) —
   the instance API for "which partitions have been materialized"
@@ -61,7 +61,7 @@ Behavior invariants:
 
 ## Edits
 
-### 1. `helix_dagster/schedules.py`
+### 1. `aimdl_coord_enrichment/schedules.py`
 
 Replace the body of `coord_enrichment_maxima_raw_weekly_schedule`
 with gap-filling logic. The fan-out-to-all shim from Step 2 is
@@ -229,7 +229,7 @@ Full suite must pass.
 ## Commit
 
 ```
-git add helix_dagster/schedules.py tests/test_schedules.py
+git add aimdl_coord_enrichment/schedules.py tests/test_schedules.py
 git commit -m "schedules: gap-filling reconciliation for MAXIMA raw (#23)
 
 - Upgrade coord_enrichment_maxima_raw_weekly_schedule from fan-out

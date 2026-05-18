@@ -31,7 +31,7 @@ Three execution-time defects, any one fatal:
 3. **Op selection mismatch.** The MAXIMA-raw and MAXIMA-derived
    case branches included `provenance_tagged_items` in their op
    config, but those jobs do not include the prov tagger in their
-   asset selection (see `helix_dagster/__init__.py`).
+   asset selection (see `aimdl_coord_enrichment/__init__.py`).
 
 CI did not catch any of these. The only test that referenced the
 script (`tests/test_phase5_artifacts.py::test_script_requires_env_vars`)
@@ -42,7 +42,7 @@ Retiring the script was the right move because every capability it
 attempted is already provided more correctly elsewhere:
 
 - Weekly reconciliation → `coord_enrichment_maxima_raw_weekly_schedule`
-  (in `helix_dagster/schedules.py`), which gap-fills against the
+  (in `aimdl_coord_enrichment/schedules.py`), which gap-fills against the
   Dagster materialization log instead of blindly firing every
   partition.
 - Continuous discovery → `maxima_raw_discovery_sensor`.
@@ -60,7 +60,7 @@ environments), the work is roughly:
 
 1. **Fix op names.** Replace every `provenance_tagged_items` with
    `helix_alpss_provenance_tagged`. Verify against the current
-   `helix_dagster/__init__.py` selections — names may have changed
+   `aimdl_coord_enrichment/__init__.py` selections — names may have changed
    again.
 2. **Drop op-config blocks for ops not in the job's selection.** The
    MAXIMA-raw and MAXIMA-derived case branches do not need a config

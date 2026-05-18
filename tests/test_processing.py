@@ -9,7 +9,7 @@ def test_import_coordinates_with_missing_yaml(monkeypatch):
     monkeypatch.setenv("COORD_TRANSFORMS_YAML", "/tmp/nonexistent_transforms.yaml")
 
     try:
-        import helix_dagster.coordinates as coord_mod
+        import aimdl_coord_enrichment.coordinates as coord_mod
 
         importlib.reload(coord_mod)
     except Exception as exc:
@@ -18,7 +18,7 @@ def test_import_coordinates_with_missing_yaml(monkeypatch):
 
 def test_constants_importable():
     """Verify constants.py exports the expected symbols after cleanup."""
-    from helix_dagster.constants import COLUMN_MAP, IGSN_PATTERN
+    from aimdl_coord_enrichment.constants import COLUMN_MAP, IGSN_PATTERN
 
     assert "Sample_ID" in COLUMN_MAP
     assert COLUMN_MAP["Sample_ID"] == "Sample_IGSN"
@@ -27,7 +27,7 @@ def test_constants_importable():
 
 def test_nan_to_none():
     """Test the nan_to_none helper."""
-    from helix_dagster.girder_io import nan_to_none
+    from aimdl_coord_enrichment.girder_io import nan_to_none
 
     assert nan_to_none(float("nan")) is None
     assert nan_to_none(42) == 42

@@ -13,8 +13,8 @@ from dagster import (
     asset_check,
 )
 
-from helix_dagster.girder_io import fetch_all_aimdl_datafiles
-from helix_dagster.resources import GirderConnection
+from aimdl_coord_enrichment.girder_io import fetch_all_aimdl_datafiles
+from aimdl_coord_enrichment.resources import GirderConnection
 
 PDV_COVERAGE_WARN_THRESHOLD = 0.5
 

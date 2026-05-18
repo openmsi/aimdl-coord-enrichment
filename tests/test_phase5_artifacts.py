@@ -28,7 +28,7 @@ def test_expected_values_doc_exists():
 
 def test_phase5_jobs_and_schedules_registered():
     """Definitions should expose 5 jobs (2 pre-Phase-5 + 3 new) and 4 schedules."""
-    from helix_dagster import defs
+    from aimdl_coord_enrichment import defs
     repo = defs.get_repository_def()
     job_names = {j.name for j in repo.get_all_jobs()}
     expected_jobs = {
@@ -57,7 +57,7 @@ def test_phase5_jobs_and_schedules_registered():
 def test_all_schedules_default_stopped():
     """Schedules must ship STOPPED; operators opt in."""
     from dagster import DefaultScheduleStatus
-    from helix_dagster import defs
+    from aimdl_coord_enrichment import defs
     for s in defs.get_repository_def().schedule_defs:
         if s.name.startswith("coord_enrichment_"):
             assert s.default_status == DefaultScheduleStatus.STOPPED, (

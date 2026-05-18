@@ -2,15 +2,15 @@
 
 from unittest.mock import MagicMock, patch
 
-from helix_dagster.coord_enrichment.cache import InstructionsCache
+from aimdl_coord_enrichment.coord_enrichment.cache import InstructionsCache
 
 
 def _item(folder_id):
     return {"_id": f"item-in-{folder_id}", "folderId": folder_id}
 
 
-@patch("helix_dagster.coord_enrichment.cache.fetch_instructions_for_run")
-@patch("helix_dagster.coord_enrichment.cache.find_run_folder_id")
+@patch("aimdl_coord_enrichment.coord_enrichment.cache.fetch_instructions_for_run")
+@patch("aimdl_coord_enrichment.coord_enrichment.cache.find_run_folder_id")
 def test_cache_fetches_once_per_run_folder(mock_find, mock_fetch):
     mock_find.return_value = "run-folder-A"
     instr_item = {"_id": "instr1"}
@@ -29,8 +29,8 @@ def test_cache_fetches_once_per_run_folder(mock_find, mock_fetch):
     assert mock_find.call_count == 2
 
 
-@patch("helix_dagster.coord_enrichment.cache.fetch_instructions_for_run")
-@patch("helix_dagster.coord_enrichment.cache.find_run_folder_id")
+@patch("aimdl_coord_enrichment.coord_enrichment.cache.fetch_instructions_for_run")
+@patch("aimdl_coord_enrichment.coord_enrichment.cache.find_run_folder_id")
 def test_cache_independent_folders(mock_find, mock_fetch):
     mock_find.side_effect = lambda item, g: f"run-{item['folderId']}"
     mock_fetch.side_effect = lambda rf_id, g: (
@@ -47,8 +47,8 @@ def test_cache_independent_folders(mock_find, mock_fetch):
     assert mock_fetch.call_count == 2
 
 
-@patch("helix_dagster.coord_enrichment.cache.fetch_instructions_for_run")
-@patch("helix_dagster.coord_enrichment.cache.find_run_folder_id")
+@patch("aimdl_coord_enrichment.coord_enrichment.cache.fetch_instructions_for_run")
+@patch("aimdl_coord_enrichment.coord_enrichment.cache.find_run_folder_id")
 def test_cache_size_reports_entry_count(mock_find, mock_fetch):
     mock_find.side_effect = lambda item, g: f"run-{item['folderId']}"
     mock_fetch.side_effect = lambda rf_id, g: ({"_id": "x"}, {"sample": {"scan_points": [[0, 0]]}})

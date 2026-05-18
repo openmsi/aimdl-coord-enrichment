@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from helix_dagster.instruments.maxima import (
+from aimdl_coord_enrichment.instruments.maxima import (
     parse_instructions_json,
     parse_scan_point_index,
     scan_point_coords,
 )
-from helix_dagster.instruments.types import ResolutionError
+from aimdl_coord_enrichment.instruments.types import ResolutionError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "instructions_example.json"
 

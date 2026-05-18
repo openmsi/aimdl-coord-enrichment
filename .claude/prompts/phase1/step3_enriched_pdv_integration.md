@@ -6,7 +6,7 @@ Branch: `refactor/asset-dag`. Steps 1 and 2 are committed.
 
 This is the biggest of the five steps. Read
 `.claude/CLAUDE.md` and the existing
-`helix_dagster/assets.py::enriched_pdv_metadata` asset before editing.
+`aimdl_coord_enrichment/assets.py::enriched_pdv_metadata` asset before editing.
 
 ## Goal
 
@@ -16,7 +16,7 @@ Make `enriched_pdv_metadata`:
    datetime for each row.
 2. Pass that timestamp to `transform_station_to_sample`.
 3. Build a `coord_provenance` payload via
-   `helix_dagster.provenance.build_coord_provenance`.
+   `aimdl_coord_enrichment.provenance.build_coord_provenance`.
 4. Write the provenance alongside the existing Station_X/Y and
    Sample_X/Y fields.
 5. Record per-row coord-version resolution so the asset check in
@@ -29,16 +29,16 @@ configurable station-local timezone support.
 
 ## Audit phase (report BEFORE editing)
 
-1. Read `helix_dagster/assets.py` — specifically
+1. Read `aimdl_coord_enrichment/assets.py` — specifically
    `enriched_pdv_metadata` and nearby imports.
 2. Read the test file(s) that exercise the existing asset. Grep:
    ```bash
    grep -rn enriched_pdv_metadata tests/ --include='*.py'
    ```
    Report whether any test currently calls the function directly.
-3. Read `helix_dagster/coordinates.py` (updated in Step 1) and
-   `helix_dagster/provenance.py` (added in Step 2).
-4. Read `helix_dagster/__init__.py` for the `__version__` string.
+3. Read `aimdl_coord_enrichment/coordinates.py` (updated in Step 1) and
+   `aimdl_coord_enrichment/provenance.py` (added in Step 2).
+4. Read `aimdl_coord_enrichment/__init__.py` for the `__version__` string.
 5. Find the YAML-path discovery logic in `coordinates.py` — we need
    the same path for the sha256 call. Report what resolved path you
    would use.
@@ -49,7 +49,7 @@ Report all findings before editing.
 
 ## Edits
 
-### `helix_dagster/assets.py::enriched_pdv_metadata`
+### `aimdl_coord_enrichment/assets.py::enriched_pdv_metadata`
 
 Additions (do not reflow unrelated code):
 
@@ -57,8 +57,8 @@ Additions (do not reflow unrelated code):
    present; add:
    ```python
    from datetime import datetime, timezone
-   from helix_dagster.coordinates import _COORD_YAML
-   from helix_dagster.provenance import (
+   from aimdl_coord_enrichment.coordinates import _COORD_YAML
+   from aimdl_coord_enrichment.provenance import (
        build_coord_provenance,
        compute_yaml_sha256,
        get_transformer_version,
@@ -216,8 +216,8 @@ Skip the whole test with `pytest.skip` if `_COORD_TRANSFORMER is None`.
 
 ## What NOT to modify
 
-- `helix_dagster/coordinates.py`, `provenance.py`, `checks.py`
-- `helix_dagster/validation.py`, `matching.py`, `girder_io.py`,
+- `aimdl_coord_enrichment/coordinates.py`, `provenance.py`, `checks.py`
+- `aimdl_coord_enrichment/validation.py`, `matching.py`, `girder_io.py`,
   `resources.py`, `sensors.py`, `constants.py`, `__init__.py`
 - Other asset functions in `assets.py` except where a signature change
   on `enriched_pdv_metadata` forces a small follow-on (confirm by

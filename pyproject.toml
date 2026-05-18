@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "helix_dagster"
+name = "aimdl_coord_enrichment"
 version = "0.6.0"
 description = "Dagster pipeline for HELIX experiment metadata extraction and enrichment"
 dependencies = [
@@ -19,7 +19,7 @@ dependencies = [
 dev = ["pytest"]
 
 [tool.setuptools.packages.find]
-include = ["helix_dagster*"]
+include = ["aimdl_coord_enrichment*"]
 
 [tool.dagster]
-module_name = "helix_dagster"
+module_name = "aimdl_coord_enrichment"

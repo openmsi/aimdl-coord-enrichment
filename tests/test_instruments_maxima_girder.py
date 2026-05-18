@@ -8,14 +8,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from helix_dagster.instruments.maxima import (
+from aimdl_coord_enrichment.instruments.maxima import (
     fetch_instructions_for_run,
     find_master_h5_item_id,
     find_run_folder_id,
     heal_maxima_derived_parent,
     resolve_leaf_coords,
 )
-from helix_dagster.instruments.types import ResolutionError
+from aimdl_coord_enrichment.instruments.types import ResolutionError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "instructions_example.json"
 FIXTURE_BYTES = FIXTURE.read_bytes()

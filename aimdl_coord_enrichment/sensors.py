@@ -9,14 +9,14 @@ from dagster import (
     sensor,
 )
 
-from helix_dagster.assets import process_helix_assets_job
-from helix_dagster.constants import HELIX_FOLDER_ID
-from helix_dagster.coord_enrichment.inventory import MAXIMA_RUN_PARTITIONS
-from helix_dagster.girder_io import (
+from aimdl_coord_enrichment.assets import process_helix_assets_job
+from aimdl_coord_enrichment.constants import HELIX_FOLDER_ID
+from aimdl_coord_enrichment.coord_enrichment.inventory import MAXIMA_RUN_PARTITIONS
+from aimdl_coord_enrichment.girder_io import (
     fetch_partition_index,
     list_recent_spreadsheets,
 )
-from helix_dagster.resources import GirderConnection
+from aimdl_coord_enrichment.resources import GirderConnection
 
 
 _MAXIMA_RAW_DATA_TYPES = ("xrd_raw", "xrf_raw")

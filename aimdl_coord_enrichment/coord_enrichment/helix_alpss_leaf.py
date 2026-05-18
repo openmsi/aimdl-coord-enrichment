@@ -17,24 +17,24 @@ from dagster import (
     asset_check,
 )
 
-from helix_dagster import __version__ as PIPELINE_VERSION
-from helix_dagster.coord_enrichment.check_support import (
+from aimdl_coord_enrichment import __version__ as PIPELINE_VERSION
+from aimdl_coord_enrichment.coord_enrichment.check_support import (
     evaluate_coord_failures,
     evaluate_success_rate,
     latest_partition_metadata,
     no_materialization_result,
 )
-from helix_dagster.coord_enrichment.config import CoordEnrichmentConfig
-from helix_dagster.coord_enrichment.inheritance import (
+from aimdl_coord_enrichment.coord_enrichment.config import CoordEnrichmentConfig
+from aimdl_coord_enrichment.coord_enrichment.inheritance import (
     inherit_from_parent,
     inherited_station_coord_source,
 )
-from helix_dagster.coord_enrichment.overwrite import should_write
-from helix_dagster.coordinates import transform_with_named_version
-from helix_dagster.instruments import INSTRUMENT_HELIX
-from helix_dagster.instruments.types import ResolutionError
-from helix_dagster.provenance import build_coord_provenance
-from helix_dagster.resources import GirderConnection
+from aimdl_coord_enrichment.coord_enrichment.overwrite import should_write
+from aimdl_coord_enrichment.coordinates import transform_with_named_version
+from aimdl_coord_enrichment.instruments import INSTRUMENT_HELIX
+from aimdl_coord_enrichment.instruments.types import ResolutionError
+from aimdl_coord_enrichment.provenance import build_coord_provenance
+from aimdl_coord_enrichment.resources import GirderConnection
 
 
 HELIX_ALPSS_PARTITIONS = StaticPartitionsDefinition(

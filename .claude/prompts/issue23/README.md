@@ -3,14 +3,14 @@
 A 9-step refactor executed by pasting each `stepN_*.md` file into a
 fresh Claude Code session in order.
 
-Tracking: https://github.com/openmsi/helix_metadata_extraction_dagster/issues/23
+Tracking: https://github.com/openmsi/aimdl-coord-enrichment/issues/23
 
 ## One-time setup (do before running any step)
 
 Assumes you start on a clean `refactor/asset-dag`.
 
 ```bash
-cd /path/to/helix_metadata_extraction_dagster
+cd /path/to/aimdl-coord-enrichment
 
 # 1. Create the GitHub issue from the drafted body
 gh issue create \

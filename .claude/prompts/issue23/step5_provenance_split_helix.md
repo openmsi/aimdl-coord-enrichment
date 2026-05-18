@@ -1,6 +1,6 @@
 # Issue 23, Step 5 — Provenance split part 1: HELIX-scoped tagger
 
-Tracking: https://github.com/openmsi/helix_metadata_extraction_dagster/issues/23
+Tracking: https://github.com/openmsi/aimdl-coord-enrichment/issues/23
 
 ## Context
 
@@ -14,12 +14,12 @@ Before editing, read:
 
 - `.claude/CLAUDE.md`
 - `.claude/prompts/issue23/README.md` (invariants)
-- `helix_dagster/coord_enrichment/provenance_tagging.py`
-- `helix_dagster/coord_enrichment/helix_alpss_leaf.py`
-- `helix_dagster/coord_enrichment/maxima_derived_leaf.py`
-- `helix_dagster/coord_enrichment/__init__.py`
-- `helix_dagster/__init__.py` (Definitions + jobs)
-- `helix_dagster/schedules.py`
+- `aimdl_coord_enrichment/coord_enrichment/provenance_tagging.py`
+- `aimdl_coord_enrichment/coord_enrichment/helix_alpss_leaf.py`
+- `aimdl_coord_enrichment/coord_enrichment/maxima_derived_leaf.py`
+- `aimdl_coord_enrichment/coord_enrichment/__init__.py`
+- `aimdl_coord_enrichment/__init__.py` (Definitions + jobs)
+- `aimdl_coord_enrichment/schedules.py`
 - `tests/test_coord_enrichment_provenance_tagging.py`
 - `tests/test_coord_enrichment_helix_alpss.py`
 - `tests/test_coord_enrichment_maxima_derived.py`
@@ -63,7 +63,7 @@ file creates a large diff for no semantic gain.
 
 ## Edits
 
-### 1. `helix_dagster/coord_enrichment/provenance_tagging.py`
+### 1. `aimdl_coord_enrichment/coord_enrichment/provenance_tagging.py`
 
 Rename the function `provenance_tagged_items` →
 `helix_alpss_provenance_tagged`. Delete the MAXIMA-facing code:
@@ -72,7 +72,7 @@ Rename the function `provenance_tagged_items` →
   block (the verifier-only part).
 - Delete the `maxima_prov_targets_resolve` `@asset_check` function.
 - Remove the `MAXIMA_DERIVED_DATA_TYPES` and `INSTRUMENT_MAXIMA`
-  imports from `helix_dagster.instruments` if they become unused.
+  imports from `aimdl_coord_enrichment.instruments` if they become unused.
 
 Keep:
 
@@ -98,7 +98,7 @@ The asset's return dict shape stays the same — it still returns
 — but `counters` and `unresolved` now only contain HELIX-partition
 entries.
 
-### 2. `helix_dagster/coord_enrichment/helix_alpss_leaf.py`
+### 2. `aimdl_coord_enrichment/coord_enrichment/helix_alpss_leaf.py`
 
 Change the dep on `enriched_helix_alpss`:
 
@@ -114,7 +114,7 @@ No body changes — the asset reads `meta.prov.wasDerivedFrom` from
 Girder, not from the tagger's return value. Only the ordering dep
 name changes.
 
-### 3. `helix_dagster/coord_enrichment/maxima_derived_leaf.py`
+### 3. `aimdl_coord_enrichment/coord_enrichment/maxima_derived_leaf.py`
 
 **Drop** `deps=["provenance_tagged_items"]` entirely. Do NOT add a
 replacement here — Step 6 adds the correct dep on
@@ -131,12 +131,12 @@ replacement here — Step 6 adds the correct dep on
 def enriched_maxima_derived(...):
 ```
 
-### 4. `helix_dagster/coord_enrichment/__init__.py`
+### 4. `aimdl_coord_enrichment/coord_enrichment/__init__.py`
 
 Rename the export:
 
 ```python
-from helix_dagster.coord_enrichment.provenance_tagging import (
+from aimdl_coord_enrichment.coord_enrichment.provenance_tagging import (
     all_helix_alpss_tagged,
     helix_alpss_provenance_tagged,
     # maxima_prov_targets_resolve REMOVED
@@ -145,7 +145,7 @@ from helix_dagster.coord_enrichment.provenance_tagging import (
 
 Update `__all__` accordingly.
 
-### 5. `helix_dagster/__init__.py`
+### 5. `aimdl_coord_enrichment/__init__.py`
 
 Imports: rename `provenance_tagged_items` → `helix_alpss_provenance_tagged`
 everywhere (import line and the `Definitions(assets=[...])` list).
@@ -181,7 +181,7 @@ Jobs — update selections:
   `coord_enrichment_maxima_raw_partition_job` are unchanged (they
   were slimmed in Step 2 and already have no provenance dep).
 
-### 6. `helix_dagster/schedules.py`
+### 6. `aimdl_coord_enrichment/schedules.py`
 
 Rename in the ops lists:
 
@@ -259,12 +259,12 @@ standalone cases).
 ## Commit
 
 ```
-git add helix_dagster/coord_enrichment/provenance_tagging.py \
-        helix_dagster/coord_enrichment/helix_alpss_leaf.py \
-        helix_dagster/coord_enrichment/maxima_derived_leaf.py \
-        helix_dagster/coord_enrichment/__init__.py \
-        helix_dagster/__init__.py \
-        helix_dagster/schedules.py \
+git add aimdl_coord_enrichment/coord_enrichment/provenance_tagging.py \
+        aimdl_coord_enrichment/coord_enrichment/helix_alpss_leaf.py \
+        aimdl_coord_enrichment/coord_enrichment/maxima_derived_leaf.py \
+        aimdl_coord_enrichment/coord_enrichment/__init__.py \
+        aimdl_coord_enrichment/__init__.py \
+        aimdl_coord_enrichment/schedules.py \
         tests/
 git commit -m "Provenance split part 1: HELIX-scoped tagger (#23)
 

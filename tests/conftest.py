@@ -1,8 +1,8 @@
 import os
 
 # Make the suite self-contained: point the coordinate transformer at a
-# vendored transforms YAML BEFORE any helix_dagster import
-# (helix_dagster.coordinates builds the transformer at module-import
+# vendored transforms YAML BEFORE any aimdl_coord_enrichment import
+# (aimdl_coord_enrichment.coordinates builds the transformer at module-import
 # time, so an autouse fixture would be too late). The fixture is named
 # distinctly from the real config because .gitignore deliberately
 # ignores `instrument_coordinate_transforms.yaml` anywhere in the tree.

@@ -1,4 +1,4 @@
-# CLAUDE.md — helix_metadata_extraction_dagster
+# CLAUDE.md — aimdl-coord-enrichment
 
 ## What this project does
 This is a Dagster pipeline that processes laser shock experiment log spreadsheets
@@ -34,7 +34,7 @@ Scheduled and manual sweeps of the coord_enrichment DAG live in:
 - `operations/run_live_sweep.sh` — one-shot script invoked by
   the runbook.
 
-Schedules in `helix_dagster/schedules.py` all ship STOPPED.
+Schedules in `aimdl_coord_enrichment/schedules.py` all ship STOPPED.
 An operator opts in via the Dagster UI.
 
 ## Architecture

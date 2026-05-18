@@ -1,6 +1,6 @@
 # Issue 23, Step 6 — Provenance split part 2: MAXIMA derived rewiring + new check
 
-Tracking: https://github.com/openmsi/helix_metadata_extraction_dagster/issues/23
+Tracking: https://github.com/openmsi/aimdl-coord-enrichment/issues/23
 
 ## Context
 
@@ -14,10 +14,10 @@ Before editing, read:
 - `.claude/CLAUDE.md`
 - `.claude/prompts/issue23/README.md` (invariants — especially the
   α-not-β decision on derived partitioning)
-- `helix_dagster/coord_enrichment/maxima_derived_leaf.py`
-- `helix_dagster/coord_enrichment/enrichment_leaves.py`
-- `helix_dagster/coord_enrichment/__init__.py`
-- `helix_dagster/__init__.py`
+- `aimdl_coord_enrichment/coord_enrichment/maxima_derived_leaf.py`
+- `aimdl_coord_enrichment/coord_enrichment/enrichment_leaves.py`
+- `aimdl_coord_enrichment/coord_enrichment/__init__.py`
+- `aimdl_coord_enrichment/__init__.py`
 - `tests/test_coord_enrichment_maxima_derived.py`
 
 ## Why this step
@@ -55,7 +55,7 @@ note under Section 3 below.
 
 ## Edits
 
-### 1. `helix_dagster/coord_enrichment/maxima_derived_leaf.py`
+### 1. `aimdl_coord_enrichment/coord_enrichment/maxima_derived_leaf.py`
 
 Add imports:
 
@@ -137,12 +137,12 @@ The two existing asset checks on `enriched_maxima_derived`
 (`enrichment_success_rate_maxima_derived`,
 `no_coord_transform_failures_maxima_derived`) are unchanged.
 
-### 2. `helix_dagster/coord_enrichment/__init__.py`
+### 2. `aimdl_coord_enrichment/coord_enrichment/__init__.py`
 
 Export the new check:
 
 ```python
-from helix_dagster.coord_enrichment.maxima_derived_leaf import (
+from aimdl_coord_enrichment.coord_enrichment.maxima_derived_leaf import (
     MAXIMA_DERIVED_PARTITIONS,
     enriched_maxima_derived,
     enrichment_success_rate_maxima_derived,
@@ -153,12 +153,12 @@ from helix_dagster.coord_enrichment.maxima_derived_leaf import (
 
 Update `__all__` to include `maxima_xrd_derived_provenance_valid`.
 
-### 3. `helix_dagster/__init__.py`
+### 3. `aimdl_coord_enrichment/__init__.py`
 
 Import the new check:
 
 ```python
-from helix_dagster.coord_enrichment import (
+from aimdl_coord_enrichment.coord_enrichment import (
     # ... existing ...
     maxima_xrd_derived_provenance_valid,
     # ... existing ...
@@ -218,7 +218,7 @@ Add two tests.
 ```python
 def test_enriched_maxima_derived_depends_on_raw():
     """The Step 6 lineage rewiring: derived depends on raw."""
-    from helix_dagster.coord_enrichment import enriched_maxima_derived
+    from aimdl_coord_enrichment.coord_enrichment import enriched_maxima_derived
     dep_keys = {str(d.asset_key) for d in enriched_maxima_derived.deps}
     assert "enriched_maxima_raw" in " ".join(dep_keys)
 ```
@@ -233,7 +233,7 @@ any particular way.)
 ```python
 def test_maxima_xrd_derived_provenance_valid_detects_missing_prov():
     """Check fails when resolution_errors include inherit_from_parent entries."""
-    from helix_dagster.coord_enrichment.maxima_derived_leaf import (
+    from aimdl_coord_enrichment.coord_enrichment.maxima_derived_leaf import (
         maxima_xrd_derived_provenance_valid,
     )
     fake_derived_output = {
@@ -259,7 +259,7 @@ def test_maxima_xrd_derived_provenance_valid_detects_missing_prov():
 
 ```python
 def test_maxima_xrd_derived_provenance_valid_passes_on_clean():
-    from helix_dagster.coord_enrichment.maxima_derived_leaf import (
+    from aimdl_coord_enrichment.coord_enrichment.maxima_derived_leaf import (
         maxima_xrd_derived_provenance_valid,
     )
     fake_derived_output = {"resolution_errors": []}
@@ -291,9 +291,9 @@ un-guards them).
 ## Commit
 
 ```
-git add helix_dagster/coord_enrichment/maxima_derived_leaf.py \
-        helix_dagster/coord_enrichment/__init__.py \
-        helix_dagster/__init__.py \
+git add aimdl_coord_enrichment/coord_enrichment/maxima_derived_leaf.py \
+        aimdl_coord_enrichment/coord_enrichment/__init__.py \
+        aimdl_coord_enrichment/__init__.py \
         tests/test_coord_enrichment_maxima_derived.py
 git commit -m "Provenance split part 2: lineage dep + new check (#23)
 

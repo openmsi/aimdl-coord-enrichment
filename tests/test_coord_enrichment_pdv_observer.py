@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from dagster import build_asset_context
 
-from helix_dagster.coord_enrichment.pdv_observer import (
+from aimdl_coord_enrichment.coord_enrichment.pdv_observer import (
     PDV_COVERAGE_WARN_THRESHOLD,
     helix_pdv_coverage_observer,
     pdv_coverage_above_threshold,
@@ -27,7 +27,7 @@ def _item(igsn=None, station_x=None, station_y=None, coord_prov=None):
 def _run_observer(items):
     ctx = build_asset_context()
     with patch(
-        "helix_dagster.coord_enrichment.pdv_observer.fetch_all_aimdl_datafiles",
+        "aimdl_coord_enrichment.coord_enrichment.pdv_observer.fetch_all_aimdl_datafiles",
         return_value=items,
     ):
         return helix_pdv_coverage_observer(ctx, None)
