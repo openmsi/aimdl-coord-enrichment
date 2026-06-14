@@ -19,7 +19,7 @@ from aimdl_coord_enrichment.resources import GirderConnection
 PDV_COVERAGE_WARN_THRESHOLD = 0.5
 
 
-@asset
+@asset(group_name="coord_enrichment_reporting")
 def helix_pdv_coverage_observer(
     context: AssetExecutionContext,
     girder: GirderConnection,

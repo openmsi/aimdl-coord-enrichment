@@ -47,6 +47,7 @@ HELIX_ALPSS_PARTITIONS = StaticPartitionsDefinition(
 
 
 @asset(
+    group_name="helix_alpss",
     partitions_def=HELIX_ALPSS_PARTITIONS,
     deps=["helix_alpss_provenance_tagged"],
 )

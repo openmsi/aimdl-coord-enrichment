@@ -11,7 +11,7 @@ from aimdl_coord_enrichment.coord_enrichment.config import CoordEnrichmentConfig
 from aimdl_coord_enrichment.resources import GirderConnection
 
 
-@asset
+@asset(group_name="coord_enrichment_reporting")
 def coord_enrichment_manifest(
     context: AssetExecutionContext,
     config: CoordEnrichmentConfig,

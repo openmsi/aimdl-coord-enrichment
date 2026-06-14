@@ -101,7 +101,7 @@ def _is_in_scope(item: dict) -> bool:
     return True
 
 
-@asset
+@asset(group_name="coord_enrichment_core")
 def enrichable_items_inventory(
     context: AssetExecutionContext,
     girder: GirderConnection,

@@ -108,7 +108,7 @@ def _apply_decision(
         write_ops.append(op)
 
 
-@asset
+@asset(group_name="helix_alpss")
 def helix_alpss_provenance_tagged(
     context: AssetExecutionContext,
     config: CoordEnrichmentConfig,

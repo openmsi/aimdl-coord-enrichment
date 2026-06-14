@@ -30,7 +30,7 @@ class ExperimentLogConfig(Config):
     filename: str
 
 
-@asset
+@asset(group_name="helix_spreadsheet")
 def experiment_log_source(
     context: AssetExecutionContext,
     config: ExperimentLogConfig,
@@ -53,7 +53,7 @@ def experiment_log_source(
     return source
 
 
-@asset
+@asset(group_name="helix_spreadsheet")
 def raw_experiment_log(
     context: AssetExecutionContext,
     experiment_log_source: dict,
@@ -74,7 +74,7 @@ def raw_experiment_log(
     return df
 
 
-@asset
+@asset(group_name="helix_spreadsheet")
 def pdv_trace_inventory(
     context: AssetExecutionContext,
     girder: GirderConnection,
@@ -108,7 +108,7 @@ def pdv_trace_inventory(
     return items
 
 
-@asset
+@asset(group_name="helix_spreadsheet")
 def validated_rows(
     context: AssetExecutionContext,
     raw_experiment_log: pd.DataFrame,
@@ -142,7 +142,7 @@ def validated_rows(
     return {"dataframe": df, "igsn_issues": igsn_issues}
 
 
-@asset
+@asset(group_name="helix_spreadsheet")
 def pdv_cross_references(
     context: AssetExecutionContext,
     validated_rows: dict,
@@ -190,7 +190,7 @@ def pdv_cross_references(
     return {"matches": matches, "pdv_issues": pdv_issues}
 
 
-@asset
+@asset(group_name="helix_spreadsheet")
 def enriched_pdv_metadata(
     context: AssetExecutionContext,
     experiment_log_source: dict,
@@ -336,7 +336,7 @@ def enriched_pdv_metadata(
     }
 
 
-@asset
+@asset(group_name="helix_spreadsheet")
 def alpss_results_inventory(
     context: AssetExecutionContext,
     girder: GirderConnection,
@@ -362,7 +362,7 @@ def alpss_results_inventory(
     return items
 
 
-@asset
+@asset(group_name="helix_spreadsheet")
 def quality_report(
     context: AssetExecutionContext,
     validated_rows: dict,
@@ -426,7 +426,7 @@ def quality_report(
     return report
 
 
-@asset
+@asset(group_name="helix_spreadsheet")
 def processing_manifest(
     context: AssetExecutionContext,
     experiment_log_source: dict,

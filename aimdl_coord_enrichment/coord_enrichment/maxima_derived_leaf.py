@@ -47,6 +47,7 @@ MAXIMA_DERIVED_PARTITIONS = StaticPartitionsDefinition(
 
 
 @asset(
+    group_name="maxima_derived",
     partitions_def=MAXIMA_DERIVED_PARTITIONS,
     deps=[
         AssetDep(
