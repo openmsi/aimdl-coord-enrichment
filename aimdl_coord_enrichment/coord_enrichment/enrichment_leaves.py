@@ -137,6 +137,7 @@ def _fetch_instructions_for_run(
 
 
 @asset(
+    group_name="maxima_raw",
     partitions_def=MAXIMA_RAW_PARTITIONS,
 )
 def enriched_maxima_raw(

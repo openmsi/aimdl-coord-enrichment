@@ -110,6 +110,7 @@ def _read_leaf_partitions(
 
 
 @asset(
+    group_name="coord_enrichment_reporting",
     deps=[
         AssetDep("enriched_maxima_raw", partition_mapping=AllPartitionMapping()),
         AssetDep("enriched_helix_alpss", partition_mapping=AllPartitionMapping()),

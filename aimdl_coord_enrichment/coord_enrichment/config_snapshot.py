@@ -24,7 +24,7 @@ class CoordTransformSnapshot:
     versions_by_instrument: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
-@asset
+@asset(group_name="coord_enrichment_core")
 def coord_transform_config_snapshot(
     context: AssetExecutionContext,
 ) -> CoordTransformSnapshot:
