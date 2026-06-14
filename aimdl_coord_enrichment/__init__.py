@@ -70,6 +70,17 @@ coord_enrichment_job = define_asset_job(
     ),
 )
 
+# NOTE: coord_enrichment_maxima_raw_job and
+# coord_enrichment_maxima_raw_partition_job select identical assets on
+# purpose. They are kept as two jobs so the sensor-driven and
+# schedule-driven launch paths produce separate, filterable run feeds in
+# the UI. The partition_key on each RunRequest — not the job identity —
+# decides what materializes, so this split is a convention for
+# observability/intent, not a Dagster requirement.
+
+# Schedule target: weekly gap-filling reconciliation sweep. The weekly
+# schedule enumerates all registered partitions and emits a RunRequest
+# only for those lacking a successful materialization.
 coord_enrichment_maxima_raw_job = define_asset_job(
     name="coord_enrichment_maxima_raw_job",
     selection=AssetSelection.assets(
@@ -78,6 +89,9 @@ coord_enrichment_maxima_raw_job = define_asset_job(
     ),
 )
 
+# Sensor target: single-partition, event-driven discovery. The
+# maxima_raw_discovery_sensor emits one RunRequest per new/changed
+# AIMD-L partition, deduped on raw + xrd_metadata content hashes.
 coord_enrichment_maxima_raw_partition_job = define_asset_job(
     name="coord_enrichment_maxima_raw_partition_job",
     selection=AssetSelection.assets(
