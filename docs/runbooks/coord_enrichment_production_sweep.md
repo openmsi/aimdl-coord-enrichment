@@ -40,6 +40,11 @@ who has read and understood this document.
 
 ## Dry-run rehearsal
 
+> For a full read-only production-readiness evaluation with a GO/NO-GO
+> rubric (scripted via `operations/dry_run_readiness.py` or the UI), see
+> [`readiness_dry_run.md`](readiness_dry_run.md). The rehearsal below is
+> the lighter-weight single-partition smoke check.
+
 Run once with `dry_run=True` (the default).
 
 **MAXIMA raw** is now partitioned on

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -128,3 +128,74 @@ def test_transform_with_named_version_missing_transformer_returns_none():
         assert sy is None
     finally:
         coord_mod._COORD_TRANSFORMER = original
+
+
+# --- HELIX version-selection boundary tests ---
+#
+# HELIX recalibrated on 2026-04-01T00:00:00-04:00: the instrument's station
+# frame was physically realigned to match the sample frame, so from that
+# instant on Station == Sample (v2 = identity). Earlier shots use v1, a
+# horizontal flip about x=20 (x' = 40 - x, y' = y). These tests lock the
+# cutover instant and the value-level behavior through the timestamp-driven
+# selection path, so a future YAML edit can't silently move the boundary or
+# break the realignment. valid_from is inclusive, valid_until exclusive.
+
+HELIX_V2_CUTOVER_UTC = datetime(2026, 4, 1, 4, 0, 0, tzinfo=timezone.utc)
+# 2026-04-01T04:00:00Z == 2026-04-01T00:00:00-04:00 (the YAML boundary)
+
+
+def test_helix_v1_flip_before_cutover():
+    """A pre-cutover shot resolves to v1 and applies the horizontal flip."""
+    if _COORD_TRANSFORMER is None:
+        pytest.skip("COORD_TRANSFORMS_YAML not available")
+    ts = HELIX_V2_CUTOVER_UTC - timedelta(days=30)
+    sx, sy, name = transform_station_to_sample(8.0, 8.0, instrument="HELIX", timestamp=ts)
+    assert name == "HELIX/v1"
+    assert sx == pytest.approx(32.0, abs=1e-6)  # 40 - 8
+    assert sy == pytest.approx(8.0, abs=1e-6)
+
+
+def test_helix_v2_identity_after_cutover():
+    """A post-cutover shot resolves to v2 (identity: Station == Sample)."""
+    if _COORD_TRANSFORMER is None:
+        pytest.skip("COORD_TRANSFORMS_YAML not available")
+    ts = HELIX_V2_CUTOVER_UTC + timedelta(days=30)
+    sx, sy, name = transform_station_to_sample(8.0, 8.0, instrument="HELIX", timestamp=ts)
+    assert name == "HELIX/v2"
+    assert sx == pytest.approx(8.0, abs=1e-6)
+    assert sy == pytest.approx(8.0, abs=1e-6)
+
+
+def test_helix_boundary_just_before_is_v1():
+    """One second before the cutover still resolves to v1 (valid_until exclusive)."""
+    if _COORD_TRANSFORMER is None:
+        pytest.skip("COORD_TRANSFORMS_YAML not available")
+    ts = HELIX_V2_CUTOVER_UTC - timedelta(seconds=1)
+    _, _, name = transform_station_to_sample(8.0, 8.0, instrument="HELIX", timestamp=ts)
+    assert name == "HELIX/v1"
+
+
+def test_helix_boundary_at_cutover_is_v2():
+    """Exactly at the cutover instant resolves to v2 (valid_from inclusive)."""
+    if _COORD_TRANSFORMER is None:
+        pytest.skip("COORD_TRANSFORMS_YAML not available")
+    _, _, name = transform_station_to_sample(
+        8.0, 8.0, instrument="HELIX", timestamp=HELIX_V2_CUTOVER_UTC
+    )
+    assert name == "HELIX/v2"
+
+
+def test_helix_version_changes_result_across_cutover():
+    """The same station point yields different sample coords on either side
+    of the cutover, proving version selection actually drives the math."""
+    if _COORD_TRANSFORMER is None:
+        pytest.skip("COORD_TRANSFORMS_YAML not available")
+    before = transform_station_to_sample(
+        8.0, 8.0, instrument="HELIX", timestamp=HELIX_V2_CUTOVER_UTC - timedelta(seconds=1)
+    )
+    at = transform_station_to_sample(
+        8.0, 8.0, instrument="HELIX", timestamp=HELIX_V2_CUTOVER_UTC
+    )
+    assert before[2] == "HELIX/v1"
+    assert at[2] == "HELIX/v2"
+    assert before[:2] != at[:2]
