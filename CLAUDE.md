@@ -26,6 +26,10 @@ from this list.
 
 Scheduled and manual sweeps of the coord_enrichment DAG live in:
 
+- `docs/runbooks/readiness_dry_run.md` — read-only
+  production-readiness dry run (GO/NO-GO rubric); run before a
+  live sweep. Driven by `operations/dry_run_readiness.py` or the
+  Dagster UI.
 - `docs/runbooks/coord_enrichment_production_sweep.md` — the
   operator-facing runbook for live sweeps.
 - `docs/runbooks/first_sweep_expected_values.md` — reference
@@ -41,9 +45,11 @@ An operator opts in via the Dagster UI.
 - **Girder** is the data management platform (REST API at data.htmdec.org)
 - **Dagster** orchestrates the metadata extraction pipeline
 - **coordinate-transformer** (`aimdl_coordinate_systems` package) handles
-  instrument-to-sample coordinate transformations. Supports versioned
-  transforms with timestamp-based version selection (v0.3.0+), though
-  `coordinates.py` does not yet pass timestamps.
+  instrument-to-sample coordinate transformations with timestamp-based
+  version selection (v0.3.0+). `coordinates.py` passes the shot timestamp,
+  so historical shots resolve to the version valid at the time. HELIX `v1`
+  applies before the 2026-04-01 recalibration and `v2` (identity — the
+  station frame was realigned to the sample frame) on/after it.
 - **IGSN** persistent identifiers link measurements to physical samples
 - **`/aimdl/datafiles`** Girder endpoint provides indexed queries by
   `meta.data_type` (no folder crawling)
