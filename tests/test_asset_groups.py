@@ -12,17 +12,11 @@ style of `tests/test_annotations_rule.py`.
 
 from aimdl_coord_enrichment import defs
 
-# Asset key -> expected group_name. 18 assets across 6 groups.
+# Asset key -> expected group_name. 12 assets across 6 groups.
 EXPECTED_GROUPS = {
-    "experiment_log_source": "helix_spreadsheet",
-    "raw_experiment_log": "helix_spreadsheet",
-    "pdv_trace_inventory": "helix_spreadsheet",
-    "validated_rows": "helix_spreadsheet",
-    "pdv_cross_references": "helix_spreadsheet",
-    "enriched_pdv_metadata": "helix_spreadsheet",
-    "alpss_results_inventory": "helix_spreadsheet",
-    "quality_report": "helix_spreadsheet",
-    "processing_manifest": "helix_spreadsheet",
+    "pdv_log": "helix_spreadsheet",
+    "pdv_data": "helix_spreadsheet",
+    "pdv_processing_manifest": "helix_spreadsheet",
     "helix_alpss_provenance_tagged": "helix_alpss",
     "enriched_helix_alpss": "helix_alpss",
     "enriched_maxima_raw": "maxima_raw",
@@ -35,7 +29,7 @@ EXPECTED_GROUPS = {
 }
 
 EXPECTED_COUNTS = {
-    "helix_spreadsheet": 9,
+    "helix_spreadsheet": 3,
     "helix_alpss": 2,
     "maxima_raw": 1,
     "maxima_derived": 1,

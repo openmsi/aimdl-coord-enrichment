@@ -2,42 +2,21 @@
 
 These checks evaluate the output of each critical asset and produce
 pass/warn/fail indicators visible in the Dagster UI. They do NOT block
-pipeline execution — they are advisory.
+pipeline execution — they are advisory. Each check reads a single
+asset's bundled output dict.
 """
 
 from dagster import (
     AssetCheckResult,
     AssetCheckSeverity,
-    AssetIn,
     asset_check,
 )
 
 
-@asset_check(asset="pdv_trace_inventory")
-def zero_inventory(context, pdv_trace_inventory):
-    """ERROR if the PDV trace inventory returned zero items.
-
-    This typically means meta.igsn has not been tagged on PDV files yet,
-    so the /aimdl/datafiles endpoint returns nothing.
-    """
-    count = len(pdv_trace_inventory)
-    passed = count > 0
-    return AssetCheckResult(
-        passed=passed,
-        severity=AssetCheckSeverity.ERROR,
-        metadata={"item_count": count},
-        description=(
-            f"Inventory contains {count} items."
-            if passed
-            else "Inventory is EMPTY. Check that meta.igsn is tagged on PDV files."
-        ),
-    )
-
-
-@asset_check(asset="validated_rows")
-def igsn_validity_rate(context, validated_rows):
+@asset_check(asset="pdv_log")
+def igsn_validity_rate(context, pdv_log):
     """WARN if fewer than 80% of rows have valid IGSNs."""
-    df = validated_rows["dataframe"]
+    df = pdv_log["dataframe"]
     total = len(df)
     if total == 0:
         return AssetCheckResult(
@@ -61,19 +40,32 @@ def igsn_validity_rate(context, validated_rows):
     )
 
 
-@asset_check(asset="pdv_cross_references", additional_ins={"validated_rows": AssetIn("validated_rows")})
-def pdv_match_rate(context, pdv_cross_references, validated_rows):
-    """WARN if fewer than 50% of rows with PDV filenames were matched."""
-    df = validated_rows["dataframe"]
-    import math
-    rows_with_pdv = sum(
-        1
-        for _, row in df.iterrows()
-        if row.get("PDV_FileName") is not None
-        and not (isinstance(row.get("PDV_FileName"), float) and math.isnan(row.get("PDV_FileName")))
-        and str(row.get("PDV_FileName")).strip() != ""
+@asset_check(asset="pdv_data")
+def zero_pdv_inventory(context, pdv_data):
+    """ERROR if the PDV trace inventory returned zero items.
+
+    This typically means meta.igsn has not been tagged on PDV files yet,
+    so the /aimdl/datafiles endpoint returns nothing.
+    """
+    count = pdv_data["inventory_count"]
+    passed = count > 0
+    return AssetCheckResult(
+        passed=passed,
+        severity=AssetCheckSeverity.ERROR,
+        metadata={"item_count": count},
+        description=(
+            f"Inventory contains {count} items."
+            if passed
+            else "Inventory is EMPTY. Check that meta.igsn is tagged on PDV files."
+        ),
     )
-    matched_count = len(pdv_cross_references["matches"])
+
+
+@asset_check(asset="pdv_data")
+def pdv_match_rate(context, pdv_data):
+    """WARN if fewer than 50% of rows with PDV filenames were matched."""
+    rows_with_pdv = pdv_data["rows_with_pdv"]
+    matched_count = pdv_data["matched_count"]
     rate = matched_count / rows_with_pdv if rows_with_pdv > 0 else 0.0
     passed = rate >= 0.5
     return AssetCheckResult(
@@ -88,10 +80,10 @@ def pdv_match_rate(context, pdv_cross_references, validated_rows):
     )
 
 
-@asset_check(asset="pdv_cross_references")
-def igsn_consistency(context, pdv_cross_references):
+@asset_check(asset="pdv_data")
+def igsn_consistency(context, pdv_data):
     """ERROR if any matched PDV item has a different IGSN than the spreadsheet row."""
-    issues = pdv_cross_references["pdv_issues"]
+    issues = pdv_data["pdv_issues"]
     mismatches = [i for i in issues if i.get("type") == "igsn_mismatch"]
     passed = len(mismatches) == 0
     metadata = {"mismatch_count": len(mismatches)}
@@ -110,13 +102,13 @@ def igsn_consistency(context, pdv_cross_references):
     )
 
 
-@asset_check(asset="enriched_pdv_metadata", additional_ins={"pdv_cross_references": AssetIn("pdv_cross_references")})
-def enrichment_success_rate(context, enriched_pdv_metadata, pdv_cross_references):
+@asset_check(asset="pdv_data")
+def enrichment_success_rate(context, pdv_data):
     """WARN if fewer than 90% of matched items were successfully enriched."""
-    matched_count = len(pdv_cross_references["matches"])
-    written_count = enriched_pdv_metadata["written_count"]
+    matched_count = pdv_data["matched_count"]
+    written_count = pdv_data["written_count"]
     rate = written_count / matched_count if matched_count > 0 else 0.0
-    error_count = len(enriched_pdv_metadata["write_errors"])
+    error_count = len(pdv_data["write_errors"])
     passed = rate >= 0.9
     return AssetCheckResult(
         passed=passed,
@@ -131,8 +123,8 @@ def enrichment_success_rate(context, enriched_pdv_metadata, pdv_cross_references
     )
 
 
-@asset_check(asset="enriched_pdv_metadata")
-def coord_transform_check(context, enriched_pdv_metadata):
+@asset_check(asset="pdv_data")
+def coord_transform_check(context, pdv_data):
     """WARN on coordinate transform issues.
 
     Fails (WARN) if any of:
@@ -140,10 +132,10 @@ def coord_transform_check(context, enriched_pdv_metadata):
       - version_counter is empty while writes happened
       - yaml_sha256 is None         (YAML could not be hashed)
     """
-    failures = enriched_pdv_metadata.get("coord_failures", 0)
-    version_counter = enriched_pdv_metadata.get("version_counter", {}) or {}
-    yaml_sha256 = enriched_pdv_metadata.get("yaml_sha256")
-    written_count = enriched_pdv_metadata.get("written_count", 0)
+    failures = pdv_data.get("coord_failures", 0)
+    version_counter = pdv_data.get("version_counter", {}) or {}
+    yaml_sha256 = pdv_data.get("yaml_sha256")
+    written_count = pdv_data.get("written_count", 0)
 
     unresolved_versions = written_count > 0 and not version_counter
     missing_sha = yaml_sha256 is None
@@ -172,4 +164,20 @@ def coord_transform_check(context, enriched_pdv_metadata):
             "yaml_sha256_present": not missing_sha,
         },
         description=description,
+    )
+
+
+@asset_check(asset="pdv_processing_manifest")
+def manifest_written(context, pdv_processing_manifest):
+    """ERROR if the processing manifest was not written to any source item."""
+    written = pdv_processing_manifest.get("manifest_written", False)
+    return AssetCheckResult(
+        passed=bool(written),
+        severity=AssetCheckSeverity.ERROR,
+        metadata={"status": pdv_processing_manifest.get("status", "unknown")},
+        description=(
+            "Processing manifest written to source log item(s)."
+            if written
+            else "Processing manifest write FAILED for one or more source items."
+        ),
     )

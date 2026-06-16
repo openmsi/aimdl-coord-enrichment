@@ -3,24 +3,19 @@ __version__ = "0.6.0"
 from dagster import AssetSelection, Definitions, EnvVar, define_asset_job
 
 from aimdl_coord_enrichment.assets import (
-    alpss_results_inventory,
-    enriched_pdv_metadata,
-    experiment_log_source,
-    pdv_cross_references,
-    pdv_trace_inventory,
+    pdv_data,
+    pdv_log,
+    pdv_processing_manifest,
     process_helix_assets_job,
-    processing_manifest,
-    quality_report,
-    raw_experiment_log,
-    validated_rows,
 )
 from aimdl_coord_enrichment.checks import (
     coord_transform_check,
     enrichment_success_rate,
     igsn_consistency,
     igsn_validity_rate,
+    manifest_written,
     pdv_match_rate,
-    zero_inventory,
+    zero_pdv_inventory,
 )
 from aimdl_coord_enrichment.coord_enrichment import (
     coord_enrichment_manifest,
@@ -53,7 +48,7 @@ from aimdl_coord_enrichment.schedules import (
     coord_enrichment_state_report_schedule,
 )
 from aimdl_coord_enrichment.sensors import (
-    helix_folder_sensor,
+    helix_experiment_log_discovery_sensor,
     maxima_raw_discovery_sensor,
 )
 
@@ -122,16 +117,10 @@ coord_enrichment_maxima_derived_job = define_asset_job(
 
 defs = Definitions(
     assets=[
-        # existing
-        experiment_log_source,
-        raw_experiment_log,
-        pdv_trace_inventory,
-        validated_rows,
-        pdv_cross_references,
-        enriched_pdv_metadata,
-        alpss_results_inventory,
-        quality_report,
-        processing_manifest,
+        # helix_spreadsheet (3 partitioned assets)
+        pdv_log,
+        pdv_data,
+        pdv_processing_manifest,
         # coord_enrichment (Phase 3)
         coord_transform_config_snapshot,
         enrichable_items_inventory,
@@ -145,13 +134,14 @@ defs = Definitions(
         helix_pdv_coverage_observer,
     ],
     asset_checks=[
-        # existing
-        zero_inventory,
+        # helix_spreadsheet (retargeted to the 3-asset flow)
         igsn_validity_rate,
+        zero_pdv_inventory,
         pdv_match_rate,
         igsn_consistency,
         enrichment_success_rate,
         coord_transform_check,
+        manifest_written,
         # coord_enrichment (Phase 3)
         inventory_nonempty_per_instrument,
         all_helix_alpss_tagged,
@@ -180,7 +170,7 @@ defs = Definitions(
         coord_enrichment_maxima_derived_weekly_schedule,
     ],
     sensors=[
-        helix_folder_sensor,
+        helix_experiment_log_discovery_sensor,
         maxima_raw_discovery_sensor,
     ],
     resources={
