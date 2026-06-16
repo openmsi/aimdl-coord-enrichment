@@ -1,0 +1,279 @@
+"""Pure helper functions for the HELIX spreadsheet flow.
+
+Context-free, unit-testable computation extracted from the former
+nine-asset spreadsheet DAG. Each function reuses an existing domain
+helper (``validate_igsn``, ``match_pdv_file``, ``transform_station_to_sample``,
+``build_coord_provenance``) rather than reimplementing it. No ``dagster``
+import lives here — the three partitioned assets in ``assets.py`` call
+these and own all durable external-state transitions.
+"""
+
+import json
+import math
+from datetime import datetime, timezone
+
+import pandas as pd
+
+from aimdl_coord_enrichment import __version__ as PIPELINE_VERSION
+from aimdl_coord_enrichment.constants import COLUMN_MAP
+from aimdl_coord_enrichment.coordinates import transform_station_to_sample
+from aimdl_coord_enrichment.girder_io import nan_to_none
+from aimdl_coord_enrichment.matching import match_pdv_file
+from aimdl_coord_enrichment.provenance import build_coord_provenance
+from aimdl_coord_enrichment.validation import NpEncoder, validate_igsn
+
+
+def normalize_experiment_log(df):
+    """Apply COLUMN_MAP rename to a raw experiment-log DataFrame."""
+    return df.rename(columns=COLUMN_MAP)
+
+
+def validate_log_rows(df):
+    """Validate IGSNs for each row.
+
+    Returns ``(df_with_valid_igsn, igsn_issues)`` where the returned
+    DataFrame has a ``valid_igsn`` column added and ``igsn_issues`` is a
+    list of structured issue dicts (each carrying its ``row`` index).
+    """
+    df = df.copy()
+    igsn_issues = []
+    valid_igsns = []
+
+    for idx, row in df.iterrows():
+        valid_igsn, issue = validate_igsn(row.get("Sample_IGSN"))
+        valid_igsns.append(valid_igsn)
+        if issue is not None:
+            issue["row"] = idx
+            igsn_issues.append(issue)
+
+    df["valid_igsn"] = valid_igsns
+    return df, igsn_issues
+
+
+def match_pdv_rows(df, pdv_items):
+    """Match each row's PDV_FileName to the inventory and cross-check IGSNs.
+
+    Returns ``(matches, pdv_issues)`` where ``matches`` is
+    ``{row_idx: pdv_item}`` and ``pdv_issues`` carries not_found /
+    ambiguous / igsn_mismatch issues (each with its ``row`` index).
+    """
+    matches = {}
+    pdv_issues = []
+
+    for idx, row in df.iterrows():
+        pdv_filename = row.get("PDV_FileName")
+        pdv_item, issue = match_pdv_file(pdv_items, pdv_filename)
+        if pdv_item is not None:
+            matches[idx] = pdv_item
+            row_igsn = row.get("valid_igsn")
+            item_igsn = pdv_item.get("meta", {}).get("igsn")
+            if row_igsn and item_igsn and row_igsn != item_igsn:
+                pdv_issues.append({
+                    "pdv_filename": pdv_filename,
+                    "type": "igsn_mismatch",
+                    "row": idx,
+                    "spreadsheet_igsn": row_igsn,
+                    "item_igsn": item_igsn,
+                })
+        if issue is not None:
+            issue["row"] = idx
+            pdv_issues.append(issue)
+
+    return matches, pdv_issues
+
+
+def count_rows_with_pdv(df):
+    """Count rows whose PDV_FileName is non-null, non-NaN, non-empty."""
+    return sum(
+        1
+        for _, row in df.iterrows()
+        if row.get("PDV_FileName") is not None
+        and not (
+            isinstance(row.get("PDV_FileName"), float)
+            and math.isnan(row.get("PDV_FileName"))
+        )
+        and str(row.get("PDV_FileName")).strip() != ""
+    )
+
+
+def _parse_row_timestamp(raw):
+    """Return (tz-aware datetime or None, was_naive: bool, origin: str)."""
+    if raw is None:
+        return None, False, "missing"
+    try:
+        ts = pd.to_datetime(raw)
+    except (ValueError, TypeError):
+        return None, False, "unparseable"
+    if pd.isna(ts):
+        return None, False, "missing"
+    py_ts = ts.to_pydatetime()
+    if py_ts.tzinfo is None:
+        py_ts = py_ts.replace(tzinfo=timezone.utc)
+        return py_ts, True, "spreadsheet_timestamp_col_assumed_utc"
+    return py_ts, False, "spreadsheet_timestamp_col"
+
+
+def write_pdv_metadata(
+    girder,
+    df,
+    matches,
+    *,
+    run_id,
+    source_item_id,
+    yaml_sha256,
+    transformer_version,
+):
+    """Write coordinate + provenance metadata to each matched PDV item.
+
+    For each matched row: parse the shot timestamp, transform station to
+    sample coordinates (version selected by timestamp), build the
+    coord_provenance block, and write to the Girder item. Each row's
+    provenance is attributed to its originating source-log item via the
+    ``_source_item_id`` column when present, else ``source_item_id``.
+
+    Returns a summary dict with ``written_count``, ``write_errors``,
+    ``coord_failures``, ``version_counter``, ``naive_timestamps_count``.
+    """
+    naive_timestamps_count = 0
+    version_counter = {}
+    written_count = 0
+    write_errors = []
+    coord_failures = 0
+
+    for row_idx, pdv_item in matches.items():
+        row = df.loc[row_idx]
+
+        station_x = nan_to_none(row.get("Flyer_X_Position_Final_mm"))
+        station_y = nan_to_none(row.get("Flyer_Y_Position_Final_mm"))
+        shot_ts, was_naive, ts_origin = _parse_row_timestamp(row.get("Timestamp"))
+        if was_naive:
+            naive_timestamps_count += 1
+        sample_x, sample_y, transform_name = transform_station_to_sample(
+            station_x, station_y, timestamp=shot_ts
+        )
+        if transform_name is not None:
+            version_counter[transform_name] = version_counter.get(transform_name, 0) + 1
+        # ensure that sample_x,y have only 4 meaningful digits to avoid bogus precision
+        if sample_x is not None:
+            sample_x = round(sample_x, 4)
+        if sample_y is not None:
+            sample_y = round(sample_y, 4)
+
+        if station_x is not None and station_y is not None and sample_x is None:
+            coord_failures += 1
+
+        row_source_item_id = row.get("_source_item_id")
+        if row_source_item_id is None or (
+            isinstance(row_source_item_id, float) and math.isnan(row_source_item_id)
+        ):
+            row_source_item_id = source_item_id
+
+        coord_prov = build_coord_provenance(
+            instrument="HELIX",
+            transform_version=transform_name,
+            transform_yaml_sha256=yaml_sha256 or "",
+            transformer_version=transformer_version,
+            pipeline_version=PIPELINE_VERSION,
+            source_timestamp=shot_ts,
+            source_timestamp_origin=ts_origin,
+            station_coord_source={
+                "kind": "helix_experiment_log",
+                "spreadsheet_item_id": row_source_item_id,
+                "spreadsheet_row_index": int(row_idx),
+                "spreadsheet_pdv_filename": row.get("PDV_FileName"),
+            },
+            dagster_run_id=run_id,
+        )
+
+        metadata = {
+            "Flyer_Row": nan_to_none(row.get("Flyer_Row")),
+            "Flyer_Column": nan_to_none(row.get("Flyer_Column")),
+            "Station_X": station_x,
+            "Station_Y": station_y,
+            "Sample_X": sample_x,
+            "Sample_Y": sample_y,
+            "coord_provenance": coord_prov,
+        }
+        # Ensure all values are JSON-serializable
+        metadata = json.loads(json.dumps(metadata, cls=NpEncoder))
+
+        try:
+            girder.addMetadataToItem(pdv_item["_id"], metadata)
+            written_count += 1
+        except Exception as exc:
+            write_errors.append({"row": row_idx, "error": str(exc)})
+
+    return {
+        "written_count": written_count,
+        "write_errors": write_errors,
+        "coord_failures": coord_failures,
+        "version_counter": version_counter,
+        "naive_timestamps_count": naive_timestamps_count,
+    }
+
+
+def summarize_pdv_processing(pdv_log, pdv_data):
+    """Aggregate issues into a processing summary (status + issues_summary).
+
+    Replaces the old quality_report + processing_manifest aggregation,
+    minus ALPSS completeness (coverage now lives in the read-only
+    helix_pdv_coverage_observer).
+    """
+    df = pdv_log["dataframe"]
+    igsn_issues = pdv_log["igsn_issues"]
+    pdv_issues = pdv_data["pdv_issues"]
+    write_errors = pdv_data["write_errors"]
+
+    total_rows = len(df)
+    valid_igsn_count = (
+        int(df["valid_igsn"].notna().sum()) if "valid_igsn" in df.columns else 0
+    )
+
+    issues_summary = {
+        "igsn_invalid": sum(1 for i in igsn_issues if i.get("issue") == "invalid_format"),
+        "igsn_missing": sum(1 for i in igsn_issues if i.get("issue") == "missing"),
+        "pdv_not_found": sum(1 for i in pdv_issues if i.get("type") == "not_found"),
+        "pdv_ambiguous": sum(1 for i in pdv_issues if i.get("type") == "ambiguous"),
+        "igsn_mismatch": sum(1 for i in pdv_issues if i.get("type") == "igsn_mismatch"),
+        "write_errors": len(write_errors),
+        "coord_failures": pdv_data.get("coord_failures", 0),
+    }
+
+    has_issues = any(v > 0 for v in issues_summary.values())
+    status = "completed_with_warnings" if has_issues else "completed_clean"
+
+    return {
+        "status": status,
+        "has_issues": has_issues,
+        "issues_summary": issues_summary,
+        "total_rows": total_rows,
+        "rows_valid_igsn": valid_igsn_count,
+        "rows_matched_pdv": pdv_data["matched_count"],
+        "rows_enriched": pdv_data["written_count"],
+    }
+
+
+def write_processing_manifest(girder, item_id, summary, *, run_id):
+    """Write meta.processing_status to one source-log Girder item.
+
+    Returns the manifest dict, with ``write_failed`` set True if the
+    Girder write raised.
+    """
+    manifest = {
+        "last_processed": datetime.now(timezone.utc).isoformat(),
+        "dagster_run_id": run_id,
+        "pipeline_version": PIPELINE_VERSION,
+        "total_rows": summary["total_rows"],
+        "rows_valid_igsn": summary["rows_valid_igsn"],
+        "rows_matched_pdv": summary["rows_matched_pdv"],
+        "rows_enriched": summary["rows_enriched"],
+        "status": summary["status"],
+        "issues_summary": summary["issues_summary"],
+    }
+
+    try:
+        girder.addMetadataToItem(item_id, {"processing_status": manifest})
+    except Exception:
+        manifest["write_failed"] = True
+
+    return manifest
