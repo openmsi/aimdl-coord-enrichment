@@ -17,12 +17,12 @@ transform version.
 
 ## Job-by-job
 
-### 1. `process_helix_assets_job` — HELIX spreadsheet DAG
-- **Trigger:** `helix_folder_sensor` (polls the HELIX folder for new experiment-log spreadsheets).
-- **Partitioning:** none — one run per spreadsheet item.
-- **What it does:** Downloads a HELIX experiment-log spreadsheet, validates IGSNs, fetches the PDV trace inventory, matches PDV files to spreadsheet rows by filename, and **writes coordinate metadata to `pdv_trace` items**. Aggregates a quality report and stamps `meta.processing_status` back onto the source spreadsheet item.
+### 1. `process_helix_assets_job` — HELIX spreadsheet flow
+- **Trigger:** `helix_experiment_log_discovery_sensor` (polls `/aimdl/partition` for `pdv_experiment_log`, registers partitions, emits one partitioned RunRequest per changed log).
+- **Partitioning:** `HELIX_EXPERIMENT_LOG_PARTITIONS` = `DynamicPartitionsDefinition("helix_experiment_log")`, keyed on `<igsn>//<experiment_date>`.
+- **What it does:** Three durable partitioned assets — `pdv_log` (read + normalize + validate the experiment log), `pdv_data` (fetch the PDV trace inventory, match rows by filename, **write coordinate metadata to `pdv_trace` items**), `pdv_processing_manifest` (stamp `meta.processing_status` onto each source log item).
 - **Coordinate source:** each spreadsheet row's `Flyer_X/Y_Position_Corrected (mm)` becomes `Station_X/Y`; the row `Timestamp` selects the HELIX transform version.
-- **Writing asset:** `enriched_pdv_metadata` → `pdv_trace`.
+- **Writing asset:** `pdv_data` → `pdv_trace`.
 
 ### 2. `coord_enrichment_job` — state report (read-only)
 - **Trigger:** `coord_enrichment_state_report_schedule` (nightly 03:00 ET, ships STOPPED).
@@ -64,7 +64,7 @@ each HELIX and MAXIMA file type, and where those coordinates come from:
 
 | Instrument | `data_type` (Girder) | Role | Writing asset | Job | Coordinate source |
 |---|---|---|---|---|---|
-| HELIX | `pdv_trace` | leaf | `enriched_pdv_metadata` | `process_helix_assets_job` | Spreadsheet row `Flyer_X/Y_Position_Corrected` |
+| HELIX | `pdv_trace` | leaf | `pdv_data` | `process_helix_assets_job` | Spreadsheet row `Flyer_X/Y_Position_Corrected` |
 | HELIX | `pdv_alpss_output` | derived | `enriched_helix_alpss` | `coord_enrichment_helix_alpss_job` | Inherited from parent `pdv_trace` |
 | HELIX | `pdv_alpss_result` | derived | `enriched_helix_alpss` | `coord_enrichment_helix_alpss_job` | Inherited from parent `pdv_trace` |
 | HELIX | `pdv_alpss_results` | derived | `enriched_helix_alpss` | `coord_enrichment_helix_alpss_job` | Inherited from parent `pdv_trace` |
