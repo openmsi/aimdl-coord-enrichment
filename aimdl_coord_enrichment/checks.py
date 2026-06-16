@@ -104,10 +104,16 @@ def igsn_consistency(context, pdv_data):
 
 @asset_check(asset="pdv_data")
 def enrichment_success_rate(context, pdv_data):
-    """WARN if fewer than 90% of matched items were successfully enriched."""
+    """WARN if fewer than 90% of matched items were successfully enriched.
+
+    Counts dry-run simulated writes as successes so a rehearsal reads as
+    representative of a live run.
+    """
     matched_count = pdv_data["matched_count"]
     written_count = pdv_data["written_count"]
-    rate = written_count / matched_count if matched_count > 0 else 0.0
+    simulated_count = pdv_data.get("simulated_count", 0)
+    success = written_count + simulated_count
+    rate = success / matched_count if matched_count > 0 else 0.0
     error_count = len(pdv_data["write_errors"])
     passed = rate >= 0.9
     return AssetCheckResult(
@@ -116,10 +122,11 @@ def enrichment_success_rate(context, pdv_data):
         metadata={
             "matched_count": matched_count,
             "written_count": written_count,
+            "simulated_count": simulated_count,
             "error_count": error_count,
             "success_rate": round(rate, 3),
         },
-        description=f"Enrichment success rate: {rate:.1%} ({written_count}/{matched_count})",
+        description=f"Enrichment success rate: {rate:.1%} ({success}/{matched_count})",
     )
 
 
@@ -135,9 +142,9 @@ def coord_transform_check(context, pdv_data):
     failures = pdv_data.get("coord_failures", 0)
     version_counter = pdv_data.get("version_counter", {}) or {}
     yaml_sha256 = pdv_data.get("yaml_sha256")
-    written_count = pdv_data.get("written_count", 0)
+    attempted = pdv_data.get("written_count", 0) + pdv_data.get("simulated_count", 0)
 
-    unresolved_versions = written_count > 0 and not version_counter
+    unresolved_versions = attempted > 0 and not version_counter
     missing_sha = yaml_sha256 is None
 
     passed = (failures == 0) and (not unresolved_versions) and (not missing_sha)

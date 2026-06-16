@@ -95,6 +95,7 @@ PDV inventory as an ERROR in the Dagster UI.
 - **What it does:** Three durable partitioned assets — `pdv_log` (read + normalize + validate the experiment log for the partition), `pdv_data` (fetch the PDV trace inventory, match rows by filename, **write coordinate metadata to `pdv_trace` items**), and `pdv_processing_manifest` (stamp `meta.processing_status` back onto each source log item).
 - **Coordinate source:** each spreadsheet row's `Flyer_X/Y_Position_Corrected (mm)` becomes `Station_X/Y`; the row `Timestamp` selects the HELIX transform version.
 - **Writing asset:** `pdv_data` → `pdv_trace`.
+- **Dry run:** `pdv_data` and `pdv_processing_manifest` take a `dry_run` config (`HelixSpreadsheetConfig`, **default `True`**). When dry, all reads/matching/transforms run but the Girder writes are simulated — checks count the would-be writes so a rehearsal reads as a live run. Set `dry_run: false` on both assets in the launchpad for a live sweep. (Because the default is safe, even an accidentally-enabled sensor run writes nothing.)
 
 ### 2. `coord_enrichment_job` — state report (read-only)
 - **Trigger:** `coord_enrichment_state_report_schedule` (nightly 03:00 ET, ships STOPPED).

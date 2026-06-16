@@ -8,11 +8,15 @@ import pytest
 from dagster import build_asset_context
 
 from aimdl_coord_enrichment.assets import (
+    HelixSpreadsheetConfig,
     pdv_data as pdv_data_fn,
     pdv_log as pdv_log_fn,
     pdv_processing_manifest as pdv_processing_manifest_fn,
 )
 from aimdl_coord_enrichment.coordinates import _COORD_TRANSFORMER
+
+LIVE = HelixSpreadsheetConfig(dry_run=False)
+DRY = HelixSpreadsheetConfig(dry_run=True)
 
 PARTITION_KEY = "ABCDEF12345//2026-04-16"
 
@@ -142,7 +146,7 @@ def test_pdv_data_matches_and_writes():
     girder = _mock_girder(log_items=[], pdv_items=pdv_items)
 
     ctx = build_asset_context(partition_key=PARTITION_KEY)
-    result = pdv_data_fn(context=ctx, pdv_log=pdv_log, girder=girder)
+    result = pdv_data_fn(context=ctx, config=LIVE, pdv_log=pdv_log, girder=girder)
 
     assert result["inventory_count"] == 1
     assert result["matched_count"] == 1
@@ -177,7 +181,7 @@ def test_pdv_processing_manifest_writes_status():
 
     ctx = build_asset_context(partition_key=PARTITION_KEY)
     result = pdv_processing_manifest_fn(
-        context=ctx, pdv_log=pdv_log, pdv_data=pdv_data, girder=girder
+        context=ctx, config=LIVE, pdv_log=pdv_log, pdv_data=pdv_data, girder=girder
     )
 
     assert result["status"] == "completed_clean"
@@ -209,7 +213,7 @@ def test_pdv_processing_manifest_flags_write_failure():
 
     ctx = build_asset_context(partition_key=PARTITION_KEY)
     result = pdv_processing_manifest_fn(
-        context=ctx, pdv_log=pdv_log, pdv_data=pdv_data, girder=girder
+        context=ctx, config=LIVE, pdv_log=pdv_log, pdv_data=pdv_data, girder=girder
     )
     assert result["manifest_written"] is False
 
@@ -259,7 +263,7 @@ def test_pdv_data_version_boundary_dispatch():
     )
 
     ctx = build_asset_context(partition_key=PARTITION_KEY)
-    result = pdv_data_fn(context=ctx, pdv_log=pdv_log, girder=girder)
+    result = pdv_data_fn(context=ctx, config=LIVE, pdv_log=pdv_log, girder=girder)
 
     assert result["written_count"] == 2
     by_id = {iid: m for iid, m in captured}
@@ -269,3 +273,74 @@ def test_pdv_data_version_boundary_dispatch():
     assert by_id["itemv2"]["Sample_X"] == pytest.approx(8.0, abs=1e-4)
     assert result["version_counter"].get("HELIX/v1", 0) == 1
     assert result["version_counter"].get("HELIX/v2", 0) == 1
+
+
+def test_pdv_data_dry_run_skips_writes():
+    """With dry_run=True, pdv_data computes but performs no Girder writes."""
+    if _COORD_TRANSFORMER is None:
+        pytest.skip("CoordinateTransformer unavailable (YAML missing)")
+
+    df = pd.DataFrame([
+        {
+            "Timestamp": "2026-04-16T17:00:00+00:00",
+            "Sample_IGSN": "ABCDEF12345",
+            "valid_igsn": "ABCDEF12345",
+            "PDV_FileName": "shot001",
+            "Flyer_X_Position_Final_mm": 10.5,
+            "Flyer_Y_Position_Final_mm": 20.3,
+            "_source_item_id": "logitem1",
+        },
+    ])
+    pdv_log = {
+        "dataframe": df,
+        "igsn_issues": [],
+        "source_item_ids": ["logitem1"],
+        "partition_key": PARTITION_KEY,
+    }
+    pdv_items = [
+        {"name": "shot001_ch1.tdms", "_id": "pdvitem1",
+         "meta": {"igsn": "ABCDEF12345", "data_type": "pdv_trace"}},
+    ]
+    girder = _mock_girder(log_items=[], pdv_items=pdv_items)
+
+    ctx = build_asset_context(partition_key=PARTITION_KEY)
+    result = pdv_data_fn(context=ctx, config=DRY, pdv_log=pdv_log, girder=girder)
+
+    girder.addMetadataToItem.assert_not_called()
+    assert result["dry_run"] is True
+    assert result["matched_count"] == 1
+    assert result["written_count"] == 0
+    assert result["simulated_count"] == 1
+    # Transform still computed even though nothing was written.
+    assert result["version_counter"]
+
+
+def test_pdv_processing_manifest_dry_run_skips_write():
+    """With dry_run=True, the manifest is computed but not written; the
+    representative manifest_written flag is still True."""
+    df = pd.DataFrame([{"valid_igsn": "ABCDEF12345"}])
+    pdv_log = {
+        "dataframe": df,
+        "igsn_issues": [],
+        "source_item_ids": ["logitem1"],
+        "partition_key": PARTITION_KEY,
+    }
+    pdv_data = {
+        "pdv_issues": [],
+        "write_errors": [],
+        "matched_count": 1,
+        "written_count": 0,
+        "simulated_count": 1,
+        "coord_failures": 0,
+    }
+    girder = MagicMock()
+
+    ctx = build_asset_context(partition_key=PARTITION_KEY)
+    result = pdv_processing_manifest_fn(
+        context=ctx, config=DRY, pdv_log=pdv_log, pdv_data=pdv_data, girder=girder
+    )
+
+    girder.addMetadataToItem.assert_not_called()
+    assert result["dry_run"] is True
+    assert result["manifest_written"] is True
+    assert result["status"] == "completed_clean"

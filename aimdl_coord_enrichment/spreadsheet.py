@@ -122,6 +122,7 @@ def write_pdv_metadata(
     source_item_id,
     yaml_sha256,
     transformer_version,
+    dry_run=False,
 ):
     """Write coordinate + provenance metadata to each matched PDV item.
 
@@ -131,12 +132,18 @@ def write_pdv_metadata(
     provenance is attributed to its originating source-log item via the
     ``_source_item_id`` column when present, else ``source_item_id``.
 
-    Returns a summary dict with ``written_count``, ``write_errors``,
-    ``coord_failures``, ``version_counter``, ``naive_timestamps_count``.
+    When ``dry_run`` is True the coordinate metadata is fully computed but
+    the Girder PUT is skipped; the would-be write is tallied in
+    ``simulated_count`` instead of ``written_count``.
+
+    Returns a summary dict with ``written_count``, ``simulated_count``,
+    ``write_errors``, ``coord_failures``, ``version_counter``,
+    ``naive_timestamps_count``.
     """
     naive_timestamps_count = 0
     version_counter = {}
     written_count = 0
+    simulated_count = 0
     write_errors = []
     coord_failures = 0
 
@@ -197,6 +204,10 @@ def write_pdv_metadata(
         # Ensure all values are JSON-serializable
         metadata = json.loads(json.dumps(metadata, cls=NpEncoder))
 
+        if dry_run:
+            simulated_count += 1
+            continue
+
         try:
             girder.addMetadataToItem(pdv_item["_id"], metadata)
             written_count += 1
@@ -205,6 +216,7 @@ def write_pdv_metadata(
 
     return {
         "written_count": written_count,
+        "simulated_count": simulated_count,
         "write_errors": write_errors,
         "coord_failures": coord_failures,
         "version_counter": version_counter,
@@ -253,10 +265,14 @@ def summarize_pdv_processing(pdv_log, pdv_data):
     }
 
 
-def write_processing_manifest(girder, item_id, summary, *, run_id):
+def write_processing_manifest(girder, item_id, summary, *, run_id, dry_run=False):
     """Write meta.processing_status to one source-log Girder item.
 
-    Returns the manifest dict, with ``write_failed`` set True if the
+    When ``dry_run`` is True the manifest is built but the Girder PUT is
+    skipped (and ``write_failed`` is never set — the would-be write is
+    treated as a success for reporting).
+
+    Returns the manifest dict, with ``write_failed`` set True if a real
     Girder write raised.
     """
     manifest = {
@@ -270,6 +286,9 @@ def write_processing_manifest(girder, item_id, summary, *, run_id):
         "status": summary["status"],
         "issues_summary": summary["issues_summary"],
     }
+
+    if dry_run:
+        return manifest
 
     try:
         girder.addMetadataToItem(item_id, {"processing_status": manifest})

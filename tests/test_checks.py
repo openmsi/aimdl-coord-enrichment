@@ -92,6 +92,19 @@ def test_enrichment_success_rate_warns():
     assert not result.passed  # 5/10 = 50%
 
 
+def test_enrichment_success_rate_counts_dry_run_simulated():
+    """A dry run (written=0, simulated=matched) reads as a representative pass."""
+    ctx = build_asset_context()
+    pdv_data = {
+        "written_count": 0,
+        "simulated_count": 10,
+        "matched_count": 10,
+        "write_errors": [],
+    }
+    result = enrichment_success_rate(ctx, pdv_data=pdv_data)
+    assert result.passed  # (0+10)/10 = 100%
+
+
 def test_coord_transform_check_all_ok():
     ctx = build_asset_context()
     pdv_data = {

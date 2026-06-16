@@ -173,6 +173,24 @@ def test_write_processing_manifest_write_failure():
     assert manifest["write_failed"] is True
 
 
+def test_write_processing_manifest_dry_run_skips_write():
+    girder = MagicMock()
+    summary = {
+        "status": "completed_clean",
+        "issues_summary": {},
+        "total_rows": 1,
+        "rows_valid_igsn": 1,
+        "rows_matched_pdv": 1,
+        "rows_enriched": 1,
+    }
+    manifest = write_processing_manifest(
+        girder, "item123", summary, run_id="run1", dry_run=True
+    )
+    girder.addMetadataToItem.assert_not_called()
+    assert "write_failed" not in manifest
+    assert manifest["status"] == "completed_clean"
+
+
 def test_write_pdv_metadata_writes_coords_and_provenance():
     if _COORD_TRANSFORMER is None:
         pytest.skip("CoordinateTransformer unavailable (YAML missing)")
@@ -268,3 +286,34 @@ def test_write_pdv_metadata_records_write_errors():
     assert summary["written_count"] == 0
     assert len(summary["write_errors"]) == 1
     assert summary["write_errors"][0]["row"] == 0
+
+
+def test_write_pdv_metadata_dry_run_skips_writes():
+    if _COORD_TRANSFORMER is None:
+        pytest.skip("CoordinateTransformer unavailable (YAML missing)")
+
+    df = pd.DataFrame([
+        {
+            "Timestamp": datetime(2026, 4, 1, 12, 0, 0, tzinfo=timezone.utc),
+            "valid_igsn": "ABCDEF12345",
+            "PDV_FileName": "shot001",
+            "Flyer_X_Position_Final_mm": 10.5,
+            "Flyer_Y_Position_Final_mm": 20.3,
+        },
+    ])
+    matches = {0: {"_id": "pdvitem1", "name": "shot001_ch1.tdms", "meta": {}}}
+    girder = MagicMock()
+    summary = write_pdv_metadata(
+        girder, df, matches,
+        run_id="run1",
+        source_item_id="src",
+        yaml_sha256="deadbeef",
+        transformer_version="0.0.0-test",
+        dry_run=True,
+    )
+    girder.addMetadataToItem.assert_not_called()
+    assert summary["written_count"] == 0
+    assert summary["simulated_count"] == 1
+    assert summary["write_errors"] == []
+    # Transform still computed in a dry run.
+    assert summary["version_counter"]

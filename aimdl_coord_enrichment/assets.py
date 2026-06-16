@@ -2,6 +2,7 @@ import pandas as pd
 from dagster import (
     AssetExecutionContext,
     AssetSelection,
+    Config,
     MetadataValue,
     asset,
     define_asset_job,
@@ -36,6 +37,20 @@ from aimdl_coord_enrichment.spreadsheet import (
 # spreadsheet its own history/retries/backfills. The flow is three
 # partitioned assets — pdv_log -> pdv_data -> pdv_processing_manifest —
 # partitioned by the AIMD-L logical key "<igsn>//<experiment_date>".
+
+
+class HelixSpreadsheetConfig(Config):
+    """Run-time configuration for the helix_spreadsheet writing assets.
+
+    dry_run — if True (default), pdv_data and pdv_processing_manifest
+              perform all reads and compute the would-be Girder writes
+              but skip the actual PUTs. Mirrors the coord_enrichment
+              dry_run convention so a sweep can be rehearsed against
+              production data without mutating it. Set False for a live
+              run.
+    """
+
+    dry_run: bool = True
 
 
 @asset(
@@ -101,6 +116,7 @@ def pdv_log(
 )
 def pdv_data(
     context: AssetExecutionContext,
+    config: HelixSpreadsheetConfig,
     pdv_log: dict,
     girder: GirderConnection,
 ) -> dict:
@@ -109,8 +125,9 @@ def pdv_data(
     Fetches the full ``pdv_trace`` inventory (indexed /aimdl/datafiles
     query), matches each log row by PDV_FileName prefix, then writes
     Station/Sample coordinates + coord_provenance to each matched Girder
-    item. Returns one dict bundling everything the five attached checks
-    need.
+    item. With ``config.dry_run`` True (the default) the writes are
+    simulated, not performed. Returns one dict bundling everything the
+    attached checks need.
     """
     df = pdv_log["dataframe"]
     source_item_ids = pdv_log["source_item_ids"]
@@ -142,6 +159,7 @@ def pdv_data(
         source_item_id=source_item_ids[0] if source_item_ids else None,
         yaml_sha256=yaml_sha256,
         transformer_version=transformer_version,
+        dry_run=config.dry_run,
     )
 
     if write_summary["naive_timestamps_count"] > 0:
@@ -152,12 +170,21 @@ def pdv_data(
             write_summary["naive_timestamps_count"],
         )
 
+    if config.dry_run:
+        context.log.info(
+            "DRY RUN — would have written coordinate metadata to %d "
+            "matched pdv_trace item(s); no Girder writes performed.",
+            write_summary["simulated_count"],
+        )
+
     version_counter = write_summary["version_counter"]
     context.add_output_metadata(
         {
+            "dry_run": MetadataValue.bool(config.dry_run),
             "inventory_count": MetadataValue.int(len(inventory)),
             "matched_count": MetadataValue.int(len(matches)),
             "items_enriched": MetadataValue.int(write_summary["written_count"]),
+            "items_simulated": MetadataValue.int(write_summary["simulated_count"]),
             "coordinate_transform_failures": MetadataValue.int(
                 write_summary["coord_failures"]
             ),
@@ -168,11 +195,13 @@ def pdv_data(
         }
     )
     return {
+        "dry_run": config.dry_run,
         "inventory_count": len(inventory),
         "matched_count": len(matches),
         "rows_with_pdv": count_rows_with_pdv(df),
         "pdv_issues": pdv_issues,
         "written_count": write_summary["written_count"],
+        "simulated_count": write_summary["simulated_count"],
         "write_errors": write_summary["write_errors"],
         "coord_failures": write_summary["coord_failures"],
         "version_counter": version_counter,
@@ -187,6 +216,7 @@ def pdv_data(
 )
 def pdv_processing_manifest(
     context: AssetExecutionContext,
+    config: HelixSpreadsheetConfig,
     pdv_log: dict,
     pdv_data: dict,
     girder: GirderConnection,
@@ -195,8 +225,10 @@ def pdv_processing_manifest(
 
     Summarizes the run's issues and writes a processing manifest back to
     each source ``pdv_experiment_log`` Girder item, giving an audit
-    trail, sensor idempotency, and cross-system visibility.
-    ``manifest_written`` is False if any per-item write failed.
+    trail, sensor idempotency, and cross-system visibility. With
+    ``config.dry_run`` True (the default) the manifest is computed but
+    not written. ``manifest_written`` is False only if a real per-item
+    write failed.
     """
     summary = summarize_pdv_processing(pdv_log, pdv_data)
 
@@ -209,15 +241,23 @@ def pdv_processing_manifest(
     write_failed = False
     for item_id in source_item_ids:
         manifest = write_processing_manifest(
-            girder, item_id, summary, run_id=run_id
+            girder, item_id, summary, run_id=run_id, dry_run=config.dry_run
         )
         if manifest.get("write_failed"):
             write_failed = True
 
     manifest_written = bool(source_item_ids) and not write_failed
 
+    if config.dry_run:
+        context.log.info(
+            "DRY RUN — would have written meta.processing_status to %d "
+            "source log item(s); no Girder writes performed.",
+            len(source_item_ids),
+        )
+
     context.add_output_metadata(
         {
+            "dry_run": MetadataValue.bool(config.dry_run),
             "status": MetadataValue.text(summary["status"]),
             "manifest_written": MetadataValue.bool(manifest_written),
             "source_item_count": MetadataValue.int(len(source_item_ids)),
@@ -225,6 +265,7 @@ def pdv_processing_manifest(
         }
     )
     return {
+        "dry_run": config.dry_run,
         "status": summary["status"],
         "manifest_written": manifest_written,
         "issues_summary": summary["issues_summary"],
