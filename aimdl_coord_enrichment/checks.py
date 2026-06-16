@@ -1,9 +1,17 @@
 """Dagster asset checks for data quality surfacing.
 
-These checks evaluate the output of each critical asset and produce
-pass/warn/fail indicators visible in the Dagster UI. They do NOT block
-pipeline execution — they are advisory. Each check reads a single
-asset's bundled output dict.
+These checks evaluate the output of each helix_spreadsheet asset and
+produce pass/warn/fail indicators visible in the Dagster UI. They do NOT
+block pipeline execution — they are advisory.
+
+The assets are partitioned, so the checks must NOT take their asset as a
+positional input: that would force the IOManager to load the asset by
+partition key, which fails across the dynamic-partition cross-product
+(FileNotFoundError). Instead each check reads its partition's latest
+materialization metadata from the event log via
+``latest_partition_metadata`` and applies a pure decision helper. This
+mirrors the coord_enrichment leaf checks (see
+``coord_enrichment/check_support.py``).
 """
 
 from dagster import (
@@ -12,12 +20,18 @@ from dagster import (
     asset_check,
 )
 
+from aimdl_coord_enrichment.coord_enrichment.check_support import (
+    latest_partition_metadata,
+    no_materialization_result,
+)
 
-@asset_check(asset="pdv_log")
-def igsn_validity_rate(context, pdv_log):
+
+# --- pure decision helpers (unit-tested directly with a flat metadata dict) ---
+
+
+def eval_igsn_validity(md):
     """WARN if fewer than 80% of rows have valid IGSNs."""
-    df = pdv_log["dataframe"]
-    total = len(df)
+    total = int(md.get("row_count", 0))
     if total == 0:
         return AssetCheckResult(
             passed=True,
@@ -25,29 +39,23 @@ def igsn_validity_rate(context, pdv_log):
             metadata={"total_rows": 0, "validity_rate": 0.0},
             description="No rows to validate.",
         )
-    valid_count = df["valid_igsn"].notna().sum()
+    valid_count = int(md.get("valid_igsn_count", 0))
     rate = valid_count / total
-    passed = bool(rate >= 0.8)
     return AssetCheckResult(
-        passed=passed,
+        passed=bool(rate >= 0.8),
         severity=AssetCheckSeverity.WARN,
         metadata={
             "total_rows": total,
-            "valid_count": int(valid_count),
+            "valid_count": valid_count,
             "validity_rate": round(float(rate), 3),
         },
         description=f"IGSN validity rate: {rate:.1%} ({valid_count}/{total})",
     )
 
 
-@asset_check(asset="pdv_data")
-def zero_pdv_inventory(context, pdv_data):
-    """ERROR if the PDV trace inventory returned zero items.
-
-    This typically means meta.igsn has not been tagged on PDV files yet,
-    so the /aimdl/datafiles endpoint returns nothing.
-    """
-    count = pdv_data["inventory_count"]
+def eval_zero_inventory(md):
+    """ERROR if the PDV trace inventory returned zero items."""
+    count = int(md.get("inventory_count", 0))
     passed = count > 0
     return AssetCheckResult(
         passed=passed,
@@ -61,15 +69,13 @@ def zero_pdv_inventory(context, pdv_data):
     )
 
 
-@asset_check(asset="pdv_data")
-def pdv_match_rate(context, pdv_data):
+def eval_pdv_match_rate(md):
     """WARN if fewer than 50% of rows with PDV filenames were matched."""
-    rows_with_pdv = pdv_data["rows_with_pdv"]
-    matched_count = pdv_data["matched_count"]
+    rows_with_pdv = int(md.get("rows_with_pdv", 0))
+    matched_count = int(md.get("matched_count", 0))
     rate = matched_count / rows_with_pdv if rows_with_pdv > 0 else 0.0
-    passed = rate >= 0.5
     return AssetCheckResult(
-        passed=passed,
+        passed=rate >= 0.5,
         severity=AssetCheckSeverity.WARN,
         metadata={
             "rows_with_pdv_filename": rows_with_pdv,
@@ -80,72 +86,59 @@ def pdv_match_rate(context, pdv_data):
     )
 
 
-@asset_check(asset="pdv_data")
-def igsn_consistency(context, pdv_data):
-    """ERROR if any matched PDV item has a different IGSN than the spreadsheet row."""
-    issues = pdv_data["pdv_issues"]
-    mismatches = [i for i in issues if i.get("type") == "igsn_mismatch"]
-    passed = len(mismatches) == 0
-    metadata = {"mismatch_count": len(mismatches)}
-    if mismatches:
-        examples = mismatches[:3]
-        metadata["examples"] = str(examples)
+def eval_igsn_consistency(md):
+    """ERROR if any matched PDV item has a different IGSN than the row."""
+    mismatch_count = int(md.get("igsn_mismatch_count", 0))
+    passed = mismatch_count == 0
     return AssetCheckResult(
         passed=passed,
         severity=AssetCheckSeverity.ERROR,
-        metadata=metadata,
+        metadata={"mismatch_count": mismatch_count},
         description=(
             "No IGSN mismatches."
             if passed
-            else f"{len(mismatches)} IGSN mismatch(es) between spreadsheet and Girder items."
+            else f"{mismatch_count} IGSN mismatch(es) between spreadsheet and Girder items."
         ),
     )
 
 
-@asset_check(asset="pdv_data")
-def enrichment_success_rate(context, pdv_data):
+def eval_enrichment_success_rate(md):
     """WARN if fewer than 90% of matched items were successfully enriched.
 
     Counts dry-run simulated writes as successes so a rehearsal reads as
     representative of a live run.
     """
-    matched_count = pdv_data["matched_count"]
-    written_count = pdv_data["written_count"]
-    simulated_count = pdv_data.get("simulated_count", 0)
-    success = written_count + simulated_count
+    matched_count = int(md.get("matched_count", 0))
+    success = int(md.get("items_enriched", 0)) + int(md.get("items_simulated", 0))
     rate = success / matched_count if matched_count > 0 else 0.0
-    error_count = len(pdv_data["write_errors"])
-    passed = rate >= 0.9
     return AssetCheckResult(
-        passed=passed,
+        passed=rate >= 0.9,
         severity=AssetCheckSeverity.WARN,
         metadata={
             "matched_count": matched_count,
-            "written_count": written_count,
-            "simulated_count": simulated_count,
-            "error_count": error_count,
+            "enriched_or_simulated": success,
+            "write_errors": int(md.get("write_errors_count", 0)),
             "success_rate": round(rate, 3),
         },
         description=f"Enrichment success rate: {rate:.1%} ({success}/{matched_count})",
     )
 
 
-@asset_check(asset="pdv_data")
-def coord_transform_check(context, pdv_data):
+def eval_coord_transform(md):
     """WARN on coordinate transform issues.
 
     Fails (WARN) if any of:
-      - coord_failures > 0         (transform raised)
-      - version_counter is empty while writes happened
-      - yaml_sha256 is None         (YAML could not be hashed)
+      - coordinate_transform_failures > 0   (transform raised)
+      - no transform version resolved while writes were attempted
+      - the transforms YAML could not be hashed (provenance incomplete)
     """
-    failures = pdv_data.get("coord_failures", 0)
-    version_counter = pdv_data.get("version_counter", {}) or {}
-    yaml_sha256 = pdv_data.get("yaml_sha256")
-    attempted = pdv_data.get("written_count", 0) + pdv_data.get("simulated_count", 0)
+    failures = int(md.get("coordinate_transform_failures", 0))
+    version_count = int(md.get("transform_version_count", 0))
+    yaml_present = bool(md.get("yaml_sha256_present", False))
+    attempted = int(md.get("items_enriched", 0)) + int(md.get("items_simulated", 0))
 
-    unresolved_versions = attempted > 0 and not version_counter
-    missing_sha = yaml_sha256 is None
+    unresolved_versions = attempted > 0 and version_count == 0
+    missing_sha = not yaml_present
 
     passed = (failures == 0) and (not unresolved_versions) and (not missing_sha)
 
@@ -158,33 +151,106 @@ def coord_transform_check(context, pdv_data):
         problems.append("yaml_sha256 unavailable (provenance incomplete)")
 
     description = (
-        "Transforms OK: " + ", ".join(f"{k}={v}" for k, v in sorted(version_counter.items()))
-        if passed else "; ".join(problems)
+        md.get("transform_versions_used", "transforms OK")
+        if passed
+        else "; ".join(problems)
     )
-
     return AssetCheckResult(
         passed=passed,
         severity=AssetCheckSeverity.WARN,
         metadata={
             "coord_failures": failures,
-            "version_counter": str(sorted(version_counter.items())),
-            "yaml_sha256_present": not missing_sha,
+            "transform_version_count": version_count,
+            "yaml_sha256_present": yaml_present,
         },
         description=description,
     )
 
 
-@asset_check(asset="pdv_processing_manifest")
-def manifest_written(context, pdv_processing_manifest):
+def eval_manifest_written(md):
     """ERROR if the processing manifest was not written to any source item."""
-    written = pdv_processing_manifest.get("manifest_written", False)
+    written = bool(md.get("manifest_written", False))
     return AssetCheckResult(
-        passed=bool(written),
+        passed=written,
         severity=AssetCheckSeverity.ERROR,
-        metadata={"status": pdv_processing_manifest.get("status", "unknown")},
+        metadata={"status": md.get("status", "unknown")},
         description=(
             "Processing manifest written to source log item(s)."
             if written
-            else "Processing manifest write FAILED for one or more source items."
+            else "No source log item to write to (partition resolved zero "
+            "pdv_experiment_log items), or a real write failed."
         ),
     )
+
+
+# --- asset checks: read the partition's materialization metadata, then decide ---
+
+
+@asset_check(asset="pdv_log")
+def igsn_validity_rate(context):
+    md = latest_partition_metadata(
+        context.instance, "pdv_log", str(context.partition_key)
+    )
+    if md is None:
+        return no_materialization_result()
+    return eval_igsn_validity(md)
+
+
+@asset_check(asset="pdv_data")
+def zero_pdv_inventory(context):
+    md = latest_partition_metadata(
+        context.instance, "pdv_data", str(context.partition_key)
+    )
+    if md is None:
+        return no_materialization_result(AssetCheckSeverity.ERROR)
+    return eval_zero_inventory(md)
+
+
+@asset_check(asset="pdv_data")
+def pdv_match_rate(context):
+    md = latest_partition_metadata(
+        context.instance, "pdv_data", str(context.partition_key)
+    )
+    if md is None:
+        return no_materialization_result()
+    return eval_pdv_match_rate(md)
+
+
+@asset_check(asset="pdv_data")
+def igsn_consistency(context):
+    md = latest_partition_metadata(
+        context.instance, "pdv_data", str(context.partition_key)
+    )
+    if md is None:
+        return no_materialization_result(AssetCheckSeverity.ERROR)
+    return eval_igsn_consistency(md)
+
+
+@asset_check(asset="pdv_data")
+def enrichment_success_rate(context):
+    md = latest_partition_metadata(
+        context.instance, "pdv_data", str(context.partition_key)
+    )
+    if md is None:
+        return no_materialization_result()
+    return eval_enrichment_success_rate(md)
+
+
+@asset_check(asset="pdv_data")
+def coord_transform_check(context):
+    md = latest_partition_metadata(
+        context.instance, "pdv_data", str(context.partition_key)
+    )
+    if md is None:
+        return no_materialization_result()
+    return eval_coord_transform(md)
+
+
+@asset_check(asset="pdv_processing_manifest")
+def manifest_written(context):
+    md = latest_partition_metadata(
+        context.instance, "pdv_processing_manifest", str(context.partition_key)
+    )
+    if md is None:
+        return no_materialization_result(AssetCheckSeverity.ERROR)
+    return eval_manifest_written(md)

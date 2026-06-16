@@ -94,11 +94,18 @@ def pdv_log(
 
     combined, igsn_issues = validate_log_rows(combined)
 
+    valid_igsn_count = (
+        int(combined["valid_igsn"].notna().sum())
+        if "valid_igsn" in combined.columns
+        else 0
+    )
+
     context.add_output_metadata(
         {
             "partition_key": MetadataValue.text(key),
             "source_item_count": MetadataValue.int(len(source_item_ids)),
             "row_count": MetadataValue.int(len(combined)),
+            "valid_igsn_count": MetadataValue.int(valid_igsn_count),
             "igsn_issue_count": MetadataValue.int(len(igsn_issues)),
         }
     )
@@ -178,16 +185,25 @@ def pdv_data(
         )
 
     version_counter = write_summary["version_counter"]
+    rows_with_pdv = count_rows_with_pdv(df)
+    igsn_mismatch_count = sum(
+        1 for i in pdv_issues if i.get("type") == "igsn_mismatch"
+    )
     context.add_output_metadata(
         {
             "dry_run": MetadataValue.bool(config.dry_run),
             "inventory_count": MetadataValue.int(len(inventory)),
             "matched_count": MetadataValue.int(len(matches)),
+            "rows_with_pdv": MetadataValue.int(rows_with_pdv),
             "items_enriched": MetadataValue.int(write_summary["written_count"]),
             "items_simulated": MetadataValue.int(write_summary["simulated_count"]),
+            "write_errors_count": MetadataValue.int(len(write_summary["write_errors"])),
+            "igsn_mismatch_count": MetadataValue.int(igsn_mismatch_count),
             "coordinate_transform_failures": MetadataValue.int(
                 write_summary["coord_failures"]
             ),
+            "transform_version_count": MetadataValue.int(len(version_counter)),
+            "yaml_sha256_present": MetadataValue.bool(yaml_sha256 is not None),
             "transform_versions_used": MetadataValue.text(
                 ", ".join(f"{k}={v}" for k, v in sorted(version_counter.items()))
                 or "none"
@@ -198,7 +214,7 @@ def pdv_data(
         "dry_run": config.dry_run,
         "inventory_count": len(inventory),
         "matched_count": len(matches),
-        "rows_with_pdv": count_rows_with_pdv(df),
+        "rows_with_pdv": rows_with_pdv,
         "pdv_issues": pdv_issues,
         "written_count": write_summary["written_count"],
         "simulated_count": write_summary["simulated_count"],
