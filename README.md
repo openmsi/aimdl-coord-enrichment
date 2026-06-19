@@ -23,7 +23,7 @@ each HELIX and MAXIMA file type, and where those coordinates come from:
 
 | Instrument | `data_type` (Girder) | Role | Writing asset | Job | Coordinate source |
 |---|---|---|---|---|---|
-| HELIX | `pdv_trace` | leaf | `enriched_pdv_metadata` | `process_helix_assets_job` | Spreadsheet row `Flyer_X/Y_Position_Corrected` |
+| HELIX | `pdv_trace` | leaf | `pdv_data` | `process_helix_assets_job` | Spreadsheet row `Flyer_X/Y_Position_Corrected` |
 | HELIX | `pdv_alpss_output` | derived | `enriched_helix_alpss` | `coord_enrichment_helix_alpss_job` | Inherited from parent `pdv_trace` |
 | HELIX | `pdv_alpss_result` | derived | `enriched_helix_alpss` | `coord_enrichment_helix_alpss_job` | Inherited from parent `pdv_trace` |
 | HELIX | `pdv_alpss_results` | derived | `enriched_helix_alpss` | `coord_enrichment_helix_alpss_job` | Inherited from parent `pdv_trace` |
@@ -77,22 +77,25 @@ spreadsheets appear in the HELIX folder.
 
 ### Prerequisite: IGSN tagging
 
-The `pdv_trace_inventory` and `alpss_results_inventory` assets use the
-`/aimdl/datafiles` Girder endpoint, which requires `meta.igsn` and
+The `pdv_log` asset partitions on `pdv_experiment_log` via the
+`/aimdl/partition` Girder endpoint, and `pdv_data` fetches the PDV trace
+inventory via `/aimdl/datafiles`. Both require `meta.igsn` and
 `meta.data_type` to be set on items. Until these metadata fields are tagged
-on PDV files in Girder, the inventories will return incomplete results.
-The `zero_inventory` asset check will flag this as an ERROR in the Dagster UI.
+on experiment-log and PDV files in Girder, the flow is inert / returns
+incomplete results. The `zero_pdv_inventory` asset check will flag an empty
+PDV inventory as an ERROR in the Dagster UI.
 
 --
 
 ## Job-by-job details
 
-### 1. `process_helix_assets_job` — HELIX spreadsheet DAG
-- **Trigger:** `helix_folder_sensor` (polls the HELIX folder for new experiment-log spreadsheets).
-- **Partitioning:** none — one run per spreadsheet item.
-- **What it does:** Downloads a HELIX experiment-log spreadsheet, validates IGSNs, fetches the PDV trace inventory, matches PDV files to spreadsheet rows by filename, and **writes coordinate metadata to `pdv_trace` items**. Aggregates a quality report and stamps `meta.processing_status` back onto the source spreadsheet item.
+### 1. `process_helix_assets_job` — HELIX spreadsheet flow
+- **Trigger:** `helix_experiment_log_discovery_sensor` (polls `/aimdl/partition` for `pdv_experiment_log`, registers partitions, emits one partitioned RunRequest per changed log).
+- **Partitioning:** `HELIX_EXPERIMENT_LOG_PARTITIONS` = `DynamicPartitionsDefinition("helix_experiment_log")`, keyed on the AIMD-L logical key `<igsn>//<experiment_date>`.
+- **What it does:** Three durable partitioned assets — `pdv_log` (read + normalize + validate the experiment log for the partition), `pdv_data` (fetch the PDV trace inventory, match rows by filename, **write coordinate metadata to `pdv_trace` items**), and `pdv_processing_manifest` (stamp `meta.processing_status` back onto each source log item).
 - **Coordinate source:** each spreadsheet row's `Flyer_X/Y_Position_Corrected (mm)` becomes `Station_X/Y`; the row `Timestamp` selects the HELIX transform version.
-- **Writing asset:** `enriched_pdv_metadata` → `pdv_trace`.
+- **Writing asset:** `pdv_data` → `pdv_trace`.
+- **Dry run:** `pdv_data` and `pdv_processing_manifest` take a `dry_run` config (`HelixSpreadsheetConfig`, **default `True`**). When dry, all reads/matching/transforms run but the Girder writes are simulated — checks count the would-be writes so a rehearsal reads as a live run. Set `dry_run: false` on both assets in the launchpad for a live sweep. (Because the default is safe, even an accidentally-enabled sensor run writes nothing.)
 
 ### 2. `coord_enrichment_job` — state report (read-only)
 - **Trigger:** `coord_enrichment_state_report_schedule` (nightly 03:00 ET, ships STOPPED).
@@ -129,16 +132,15 @@ The `zero_inventory` asset check will flag this as an ERROR in the Dagster UI.
 
 ### Assets
 
+The `helix_spreadsheet` flow is three partitioned assets (assets model
+durable external-state transitions; pure computation lives in
+`spreadsheet.py` helpers):
+
 | Asset | Description |
 |---|---|
-| `raw_experiment_log` | Downloads a spreadsheet from Girder and applies column renaming |
-| `pdv_trace_inventory` | Fetches PDV trace items via `/aimdl/datafiles` (indexed query, no folder crawl) |
-| `validated_rows` | Validates IGSN identifiers on each row (pure transformation) |
-| `pdv_cross_references` | Matches PDV filenames to inventory items, checks IGSN consistency |
-| `enriched_pdv_metadata` | Writes coordinate and flyer position metadata to matched Girder items |
-| `alpss_results_inventory` | Fetches ALPSS result items via `/aimdl/datafiles` for completeness reporting |
-| `quality_report` | Aggregates all issues and ALPSS completeness metrics |
-| `processing_manifest` | Writes a structured processing record to the source Girder item |
+| `pdv_log` | Reads the experiment log(s) for the partition, applies column renaming, and validates IGSN identifiers per row |
+| `pdv_data` | Fetches the PDV trace inventory via `/aimdl/datafiles`, matches PDV filenames to rows (checking IGSN consistency), and writes coordinate + provenance metadata to matched `pdv_trace` items |
+| `pdv_processing_manifest` | Writes a structured processing record to each source experiment-log item |
 
 ### Asset checks
 
@@ -147,17 +149,18 @@ pass/warn/fail indicators in the Dagster UI:
 
 | Check | Asset | Severity | Triggers when |
 |---|---|---|---|
-| `zero_inventory` | `pdv_trace_inventory` | ERROR | Inventory returned 0 items |
-| `igsn_validity_rate` | `validated_rows` | WARN | <80% of rows have valid IGSNs |
-| `pdv_match_rate` | `pdv_cross_references` | WARN | <50% of PDV filenames matched |
-| `igsn_consistency` | `pdv_cross_references` | ERROR | IGSN mismatch between spreadsheet and Girder |
-| `enrichment_success_rate` | `enriched_pdv_metadata` | WARN | <90% of matched items enriched |
-| `coord_transform_check` | `enriched_pdv_metadata` | WARN | Any coordinate transform failures |
+| `igsn_validity_rate` | `pdv_log` | WARN | <80% of rows have valid IGSNs |
+| `zero_pdv_inventory` | `pdv_data` | ERROR | PDV trace inventory returned 0 items |
+| `pdv_match_rate` | `pdv_data` | WARN | <50% of PDV filenames matched |
+| `igsn_consistency` | `pdv_data` | ERROR | IGSN mismatch between spreadsheet and Girder |
+| `enrichment_success_rate` | `pdv_data` | WARN | <90% of matched items enriched |
+| `coord_transform_check` | `pdv_data` | WARN | Any coordinate transform failures |
+| `manifest_written` | `pdv_processing_manifest` | ERROR | Processing manifest write failed for any source item |
 
 ### Processing manifest
 
-After each run, the `processing_manifest` asset writes `meta.processing_status`
-to the source spreadsheet's Girder item:
+After each run, the `pdv_processing_manifest` asset writes
+`meta.processing_status` to each source experiment-log Girder item:
 
 ```json
 {
@@ -185,10 +188,12 @@ sensor to skip already-processed spreadsheets.
 
 ### Sensor
 
-The `helix_folder_sensor` polls the HELIX Girder folder for new spreadsheets
-using a sorted recent-items query (not a recursive folder crawl). Spreadsheets
-already processed cleanly (per `meta.processing_status`) are automatically
-skipped.
+The `helix_experiment_log_discovery_sensor` polls `/aimdl/partition` for
+`pdv_experiment_log` items, registers each AIMD-L key
+(`<igsn>//<experiment_date>`) on the `helix_experiment_log` dynamic
+partition dimension, and emits one partitioned RunRequest per key. The
+run_key embeds the partition's content hash, so unchanged logs are
+suppressed and a changed log re-triggers. Ships **STOPPED**.
 
 ## Setup
 

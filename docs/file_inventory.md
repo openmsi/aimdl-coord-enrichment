@@ -14,13 +14,20 @@ and a scratch probe (396) make up the rest.
 
 --
 
-## Flow 1 — Spreadsheet DAG (`process_helix_assets_job`)
+## Flow 1 — Spreadsheet flow (`process_helix_assets_job`)
+
+Three partitioned assets (`pdv_log → pdv_data → pdv_processing_manifest`),
+partitioned by the AIMD-L key `<igsn>//<experiment_date>`. Assets model
+durable external-state transitions; pure computation lives in
+`spreadsheet.py`.
 
 | File | Lines | Terminal output? |
 |---|---|---|
-| `aimdl_coord_enrichment/assets.py` | 528 | **Mixed** — 7 assets feed downstream; only `processing_manifest` is a sink |
-| `aimdl_coord_enrichment/checks.py` | 175 | **Yes** — asset checks, read-only, never feed a materialization |
-| **subtotal** | **703** | |
+| `aimdl_coord_enrichment/assets.py` | 245 | **Mixed** — `pdv_log`/`pdv_data` feed downstream; `pdv_processing_manifest` is a sink |
+| `aimdl_coord_enrichment/spreadsheet.py` | 279 | N/A — pure helpers (normalize, validate, match, write, summarize) |
+| `aimdl_coord_enrichment/partitions.py` | 16 | N/A — `HELIX_EXPERIMENT_LOG_PARTITIONS` definition |
+| `aimdl_coord_enrichment/checks.py` | 183 | **Yes** — asset checks, read-only, never feed a materialization |
+| **subtotal** | **723** | |
 
 ## Flow 2 — Coord-enrichment DAG
 
@@ -54,7 +61,7 @@ and a scratch probe (396) make up the rest.
 |---|---|---|
 | `aimdl_coord_enrichment/girder_io.py` | 231 | N/A — Girder read/write/query helpers |
 | `aimdl_coord_enrichment/__init__.py` | 194 | N/A — `Definitions` registry (both flows) |
-| `aimdl_coord_enrichment/sensors.py` | 162 | N/A — `helix_folder_sensor` + `maxima_raw_discovery_sensor` |
+| `aimdl_coord_enrichment/sensors.py` | 148 | N/A — `helix_experiment_log_discovery_sensor` + `maxima_raw_discovery_sensor` |
 | `aimdl_coord_enrichment/coordinates.py` | 104 | N/A — `transform_station_to_sample` (both DAGs) |
 | `aimdl_coord_enrichment/provenance.py` | 104 | N/A — `coord_provenance` builder (both DAGs) |
 | `aimdl_coord_enrichment/resources.py` | 67 | N/A — `GirderConnection` resource |
@@ -101,7 +108,7 @@ and a scratch probe (396) make up the rest.
 Five assets are true terminal sinks (read but never fed back into another
 materialization):
 
-- `processing_manifest` (in `assets.py`)
+- `pdv_processing_manifest` (in `assets.py`)
 - `enriched_helix_alpss` (`helix_alpss_leaf.py`)
 - `enriched_maxima_derived` (`maxima_derived_leaf.py`)
 - `coord_enrichment_manifest` (`manifest.py`)

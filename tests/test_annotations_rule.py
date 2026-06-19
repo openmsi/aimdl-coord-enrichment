@@ -21,6 +21,7 @@ FORBIDDEN_PATHS = [
     "aimdl_coord_enrichment/__init__.py",
     "aimdl_coord_enrichment/assets.py",
     "aimdl_coord_enrichment/checks.py",
+    "aimdl_coord_enrichment/partitions.py",
     "aimdl_coord_enrichment/resources.py",
     "aimdl_coord_enrichment/sensors.py",
     "aimdl_coord_enrichment/instruments/__init__.py",

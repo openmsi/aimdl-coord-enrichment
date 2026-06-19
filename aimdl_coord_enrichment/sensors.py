@@ -1,5 +1,3 @@
-import json
-
 from dagster import (
     DefaultSensorStatus,
     MultiPartitionKey,
@@ -10,11 +8,11 @@ from dagster import (
 )
 
 from aimdl_coord_enrichment.assets import process_helix_assets_job
-from aimdl_coord_enrichment.constants import HELIX_FOLDER_ID
 from aimdl_coord_enrichment.coord_enrichment.inventory import MAXIMA_RUN_PARTITIONS
-from aimdl_coord_enrichment.girder_io import (
-    fetch_partition_index,
-    list_recent_spreadsheets,
+from aimdl_coord_enrichment.girder_io import fetch_partition_index
+from aimdl_coord_enrichment.partitions import (
+    HELIX_EXPERIMENT_LOG_DATA_TYPE,
+    HELIX_EXPERIMENT_LOG_PARTITIONS,
 )
 from aimdl_coord_enrichment.resources import GirderConnection
 
@@ -113,50 +111,38 @@ def maxima_raw_discovery_sensor(
     minimum_interval_seconds=3600,
     default_status=DefaultSensorStatus.STOPPED,
 )
-def helix_folder_sensor(context: SensorEvaluationContext, girder: GirderConnection):
-    """Poll for new experiment log spreadsheets in the HELIX folder.
+def helix_experiment_log_discovery_sensor(
+    context: SensorEvaluationContext,
+    girder: GirderConnection,
+) -> SensorResult:
+    """Discover AIMD-L partitions for HELIX experiment logs.
 
-    Uses a sorted recent-items query instead of recursive folder crawling.
-    Tracks seen item IDs in the cursor to avoid reprocessing.
+    Per tick, fetches the partition index for ``pdv_experiment_log``
+    (keyed ``"<igsn>//<experiment_date>"`` with content-hash values),
+    registers every key on the ``helix_experiment_log`` dynamic
+    dimension, and emits one partitioned RunRequest per key. The run_key
+    embeds the content hash, so unchanged partitions are suppressed and a
+    changed log re-triggers.
     """
-    cursor_data = json.loads(context.cursor or '{"seen": []}')
-    seen = set(cursor_data["seen"])
+    index = fetch_partition_index(girder, HELIX_EXPERIMENT_LOG_DATA_TYPE)
 
-    items = list_recent_spreadsheets(girder, HELIX_FOLDER_ID, limit=100)
+    context.log.info(
+        "helix_experiment_log_discovery_sensor: %d partitions", len(index)
+    )
 
-    new_seen = set(seen)
-    requests = []
-    for item in items:
-        item_id = item["_id"]
-        if item_id not in seen:
-            # Optionally check processing manifest
-            existing_meta = item.get("meta", {})
-            processing_status = existing_meta.get("processing_status", {})
-            if processing_status.get("status") == "completed_clean":
-                context.log.info(
-                    "Skipping %s — already processed cleanly on %s",
-                    item["name"],
-                    processing_status.get("last_processed", "unknown"),
-                )
-                new_seen.add(item_id)
-                continue
-
-            requests.append(
-                RunRequest(
-                    run_key=item_id,
-                    run_config={
-                        "ops": {
-                            "experiment_log_source": {
-                                "config": {
-                                    "item_id": item_id,
-                                    "filename": item["name"],
-                                }
-                            }
-                        }
-                    },
-                )
+    return SensorResult(
+        dynamic_partitions_requests=[
+            HELIX_EXPERIMENT_LOG_PARTITIONS.build_add_request(sorted(index))
+        ],
+        run_requests=[
+            RunRequest(
+                run_key=f"helix-pdv-log|{key}|hash={content_hash}",
+                partition_key=key,
+                tags={
+                    "data_type": HELIX_EXPERIMENT_LOG_DATA_TYPE,
+                    "content_hash": content_hash,
+                },
             )
-            new_seen.add(item_id)
-
-    context.update_cursor(json.dumps({"seen": list(new_seen)}))
-    return requests
+            for key, content_hash in index.items()
+        ],
+    )

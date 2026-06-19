@@ -1,6 +1,3 @@
-import json
-from datetime import datetime, timezone
-
 import pandas as pd
 from dagster import (
     AssetExecutionContext,
@@ -11,203 +8,139 @@ from dagster import (
     define_asset_job,
 )
 
-from aimdl_coord_enrichment import __version__ as PIPELINE_VERSION
-from aimdl_coord_enrichment.constants import ALPSS_RESULT_DATA_TYPE, COLUMN_MAP, PDV_TRACE_DATA_TYPE
-from aimdl_coord_enrichment.coordinates import _COORD_YAML, transform_station_to_sample
-from aimdl_coord_enrichment.girder_io import download_and_read, fetch_all_aimdl_datafiles, nan_to_none
-from aimdl_coord_enrichment.matching import match_pdv_file
-from aimdl_coord_enrichment.provenance import (
-    build_coord_provenance,
-    compute_yaml_sha256,
-    get_transformer_version,
+from aimdl_coord_enrichment.constants import PDV_TRACE_DATA_TYPE
+from aimdl_coord_enrichment.coordinates import _COORD_YAML
+from aimdl_coord_enrichment.girder_io import (
+    download_and_read,
+    fetch_all_aimdl_datafiles,
+    fetch_partition_details,
 )
+from aimdl_coord_enrichment.partitions import (
+    HELIX_EXPERIMENT_LOG_DATA_TYPE,
+    HELIX_EXPERIMENT_LOG_PARTITIONS,
+)
+from aimdl_coord_enrichment.provenance import compute_yaml_sha256, get_transformer_version
 from aimdl_coord_enrichment.resources import GirderConnection
-from aimdl_coord_enrichment.validation import NpEncoder, validate_igsn
+from aimdl_coord_enrichment.spreadsheet import (
+    count_rows_with_pdv,
+    match_pdv_rows,
+    normalize_experiment_log,
+    summarize_pdv_processing,
+    validate_log_rows,
+    write_pdv_metadata,
+    write_processing_manifest,
+)
+
+# Design principle for this module: assets model durable external-state
+# transitions, helpers (spreadsheet.py) do the computation, checks
+# (checks.py) provide validation visibility, and partitions give each
+# spreadsheet its own history/retries/backfills. The flow is three
+# partitioned assets — pdv_log -> pdv_data -> pdv_processing_manifest —
+# partitioned by the AIMD-L logical key "<igsn>//<experiment_date>".
 
 
-class ExperimentLogConfig(Config):
-    item_id: str
-    filename: str
+class HelixSpreadsheetConfig(Config):
+    """Run-time configuration for the helix_spreadsheet writing assets.
+
+    dry_run — if True (default), pdv_data and pdv_processing_manifest
+              perform all reads and compute the would-be Girder writes
+              but skip the actual PUTs. Mirrors the coord_enrichment
+              dry_run convention so a sweep can be rehearsed against
+              production data without mutating it. Set False for a live
+              run.
+    """
+
+    dry_run: bool = True
 
 
-@asset(group_name="helix_spreadsheet")
-def experiment_log_source(
+@asset(
+    group_name="helix_spreadsheet",
+    partitions_def=HELIX_EXPERIMENT_LOG_PARTITIONS,
+)
+def pdv_log(
     context: AssetExecutionContext,
-    config: ExperimentLogConfig,
+    girder: GirderConnection,
 ) -> dict:
-    """Emit the spreadsheet source descriptor for this run.
+    """Durable boundary: read the experiment log(s) for one partition.
 
-    This asset is the single Config-bearing entry point for the
-    spreadsheet DAG. Downstream assets that need the source item id
-    or filename consume this value rather than each declaring their
-    own ExperimentLogConfig. Keeps the sensor's RunRequest small and
-    keeps source identity a first-class value in the asset graph.
+    The partition key is the AIMD-L logical key
+    ``"<igsn>//<experiment_date>"``. Fetches the matching
+    ``pdv_experiment_log`` items, downloads + normalizes each into a
+    DataFrame, concatenates them, and validates IGSNs. A partition key
+    may resolve to one or more log items; all are concatenated and every
+    source item id recorded (each row tagged with its origin via the
+    ``_source_item_id`` column).
+
+    Pure computation lives in spreadsheet.py; this asset owns only the
+    Girder reads.
     """
-    source = {"item_id": config.item_id, "filename": config.filename}
-    context.add_output_metadata(
-        {
-            "item_id": MetadataValue.text(config.item_id),
-            "filename": MetadataValue.text(config.filename),
-        }
-    )
-    return source
+    key = context.partition_key
+    items = fetch_partition_details(girder, HELIX_EXPERIMENT_LOG_DATA_TYPE, key)
 
-
-@asset(group_name="helix_spreadsheet")
-def raw_experiment_log(
-    context: AssetExecutionContext,
-    experiment_log_source: dict,
-    girder: GirderConnection,
-) -> pd.DataFrame:
-    """Download a spreadsheet from Girder and apply COLUMN_MAP rename."""
-    item_id = experiment_log_source["item_id"]
-    filename = experiment_log_source["filename"]
-    df = download_and_read(girder, item_id, filename)
-    df = df.rename(columns=COLUMN_MAP)
-    context.add_output_metadata(
-        {
-            "row_count": MetadataValue.int(len(df)),
-            "filename": MetadataValue.text(filename),
-            "source_item_id": MetadataValue.text(item_id),
-        }
-    )
-    return df
-
-
-@asset(group_name="helix_spreadsheet")
-def pdv_trace_inventory(
-    context: AssetExecutionContext,
-    girder: GirderConnection,
-) -> list:
-    """Fetch PDV trace items via the /aimdl/datafiles endpoint.
-
-    Uses an indexed MongoDB query filtered by meta.data_type='pdv_trace'
-    instead of crawling the PDV folder tree. Items must have meta.igsn
-    set to appear in results.
-    """
-    items = fetch_all_aimdl_datafiles(girder, PDV_TRACE_DATA_TYPE)
-
-    igsns = set()
+    frames = []
+    source_item_ids = []
     for item in items:
-        igsn = item.get("meta", {}).get("igsn")
-        if igsn:
-            igsns.add(igsn)
+        item_id = item["_id"]
+        df = download_and_read(girder, item_id, item["name"])
+        df = normalize_experiment_log(df)
+        df["_source_item_id"] = item_id
+        frames.append(df)
+        source_item_ids.append(item_id)
 
-    context.add_output_metadata({
-        "item_count": MetadataValue.int(len(items)),
-        "unique_igsns": MetadataValue.int(len(igsns)),
-        "data_type": MetadataValue.text(PDV_TRACE_DATA_TYPE),
-    })
+    if frames:
+        combined = pd.concat(frames, ignore_index=True)
+    else:
+        combined = pd.DataFrame()
 
-    if len(items) == 0:
-        context.log.warning(
-            "pdv_trace_inventory returned 0 items. This may indicate that "
-            "meta.igsn has not been tagged on PDV files yet."
-        )
+    combined, igsn_issues = validate_log_rows(combined)
 
-    return items
-
-
-@asset(group_name="helix_spreadsheet")
-def validated_rows(
-    context: AssetExecutionContext,
-    raw_experiment_log: pd.DataFrame,
-) -> dict:
-    """Validate IGSNs for each row. Pure transformation, no network calls."""
-    df = raw_experiment_log.copy()
-    igsn_issues = []
-    valid_igsns = []
-
-    for idx, row in df.iterrows():
-        valid_igsn, issue = validate_igsn(row.get("Sample_IGSN"))
-        valid_igsns.append(valid_igsn)
-        if issue is not None:
-            issue["row"] = idx
-            igsn_issues.append(issue)
-
-    df["valid_igsn"] = valid_igsns
-
-    valid_count = sum(1 for v in valid_igsns if v is not None)
-    missing_count = sum(1 for i in igsn_issues if i["issue"] == "missing")
-    invalid_count = sum(1 for i in igsn_issues if i["issue"] == "invalid_format")
+    valid_igsn_count = (
+        int(combined["valid_igsn"].notna().sum())
+        if "valid_igsn" in combined.columns
+        else 0
+    )
 
     context.add_output_metadata(
         {
-            "total_rows": MetadataValue.int(len(df)),
-            "valid_igsn_count": MetadataValue.int(valid_count),
-            "invalid_igsn_count": MetadataValue.int(invalid_count),
-            "missing_igsn_count": MetadataValue.int(missing_count),
+            "partition_key": MetadataValue.text(key),
+            "source_item_count": MetadataValue.int(len(source_item_ids)),
+            "row_count": MetadataValue.int(len(combined)),
+            "valid_igsn_count": MetadataValue.int(valid_igsn_count),
+            "igsn_issue_count": MetadataValue.int(len(igsn_issues)),
         }
     )
-    return {"dataframe": df, "igsn_issues": igsn_issues}
+    return {
+        "dataframe": combined,
+        "igsn_issues": igsn_issues,
+        "source_item_ids": source_item_ids,
+        "partition_key": key,
+    }
 
 
-@asset(group_name="helix_spreadsheet")
-def pdv_cross_references(
+@asset(
+    group_name="helix_spreadsheet",
+    partitions_def=HELIX_EXPERIMENT_LOG_PARTITIONS,
+)
+def pdv_data(
     context: AssetExecutionContext,
-    validated_rows: dict,
-    pdv_trace_inventory: list,
-) -> dict:
-    """Match PDV filenames to inventory items. Pure matching, no network calls."""
-    df = validated_rows["dataframe"]
-    matches = {}
-    pdv_issues = []
-
-    for idx, row in df.iterrows():
-        pdv_filename = row.get("PDV_FileName")
-        pdv_item, issue = match_pdv_file(pdv_trace_inventory, pdv_filename)
-        if pdv_item is not None:
-            matches[idx] = pdv_item
-            # Cross-check IGSN consistency
-            row_igsn = row.get("valid_igsn")
-            item_igsn = pdv_item.get("meta", {}).get("igsn")
-            if row_igsn and item_igsn and row_igsn != item_igsn:
-                pdv_issues.append({
-                    "pdv_filename": pdv_filename,
-                    "type": "igsn_mismatch",
-                    "row": idx,
-                    "spreadsheet_igsn": row_igsn,
-                    "item_igsn": item_igsn,
-                })
-        if issue is not None:
-            issue["row"] = idx
-            pdv_issues.append(issue)
-
-    matched_count = len(matches)
-    not_found_count = sum(1 for i in pdv_issues if i["type"] == "not_found")
-    ambiguous_count = sum(1 for i in pdv_issues if i["type"] == "ambiguous")
-
-    mismatch_count = sum(1 for i in pdv_issues if i["type"] == "igsn_mismatch")
-
-    context.add_output_metadata(
-        {
-            "matched_count": MetadataValue.int(matched_count),
-            "not_found_count": MetadataValue.int(not_found_count),
-            "ambiguous_count": MetadataValue.int(ambiguous_count),
-            "igsn_mismatch_count": MetadataValue.int(mismatch_count),
-        }
-    )
-    return {"matches": matches, "pdv_issues": pdv_issues}
-
-
-@asset(group_name="helix_spreadsheet")
-def enriched_pdv_metadata(
-    context: AssetExecutionContext,
-    experiment_log_source: dict,
-    pdv_cross_references: dict,
-    validated_rows: dict,
+    config: HelixSpreadsheetConfig,
+    pdv_log: dict,
     girder: GirderConnection,
 ) -> dict:
-    """Write coordinate and flyer position metadata to matched Girder PDV items.
+    """Durable boundary: match PDV traces and write coordinate metadata.
 
-    For each matched PDV item, writes: Flyer_Row, Flyer_Column,
-    Station_X, Station_Y (instrument coordinates), Sample_X, Sample_Y
-    (transformed sample-frame coordinates), and a coord_provenance
-    block describing the transform version, YAML digest, shot
-    timestamp, and source spreadsheet row used.
+    Fetches the full ``pdv_trace`` inventory (indexed /aimdl/datafiles
+    query), matches each log row by PDV_FileName prefix, then writes
+    Station/Sample coordinates + coord_provenance to each matched Girder
+    item. With ``config.dry_run`` True (the default) the writes are
+    simulated, not performed. Returns one dict bundling everything the
+    attached checks need.
     """
-    df = validated_rows["dataframe"]
-    matches = pdv_cross_references["matches"]
+    df = pdv_log["dataframe"]
+    source_item_ids = pdv_log["source_item_ids"]
+
+    inventory = fetch_all_aimdl_datafiles(girder, PDV_TRACE_DATA_TYPE)
+    matches, pdv_issues = match_pdv_rows(df, inventory)
 
     try:
         yaml_sha256 = compute_yaml_sha256(_COORD_YAML)
@@ -219,107 +152,58 @@ def enriched_pdv_metadata(
         )
         yaml_sha256 = None
     transformer_version = get_transformer_version()
-    naive_timestamps_count = 0
-    version_counter: dict[str, int] = {}
 
     try:
         run_id = context.run.run_id
     except Exception:
         run_id = None
 
-    def _parse_row_timestamp(raw):
-        """Return (tz-aware datetime or None, was_naive: bool, origin: str)."""
-        if raw is None:
-            return None, False, "missing"
-        try:
-            ts = pd.to_datetime(raw)
-        except (ValueError, TypeError):
-            return None, False, "unparseable"
-        if pd.isna(ts):
-            return None, False, "missing"
-        py_ts = ts.to_pydatetime()
-        if py_ts.tzinfo is None:
-            py_ts = py_ts.replace(tzinfo=timezone.utc)
-            return py_ts, True, "spreadsheet_timestamp_col_assumed_utc"
-        return py_ts, False, "spreadsheet_timestamp_col"
+    write_summary = write_pdv_metadata(
+        girder,
+        df,
+        matches,
+        run_id=run_id,
+        source_item_id=source_item_ids[0] if source_item_ids else None,
+        yaml_sha256=yaml_sha256,
+        transformer_version=transformer_version,
+        dry_run=config.dry_run,
+    )
 
-    written_count = 0
-    write_errors = []
-    coord_failures = 0
-
-    for row_idx, pdv_item in matches.items():
-        row = df.loc[row_idx]
-
-        station_x = nan_to_none(row.get("Flyer_X_Position_Final_mm"))
-        station_y = nan_to_none(row.get("Flyer_Y_Position_Final_mm"))
-        shot_ts, was_naive, ts_origin = _parse_row_timestamp(row.get("Timestamp"))
-        if was_naive:
-            naive_timestamps_count += 1
-        sample_x, sample_y, transform_name = transform_station_to_sample(
-            station_x, station_y, timestamp=shot_ts
-        )
-        if transform_name is not None:
-            version_counter[transform_name] = version_counter.get(transform_name, 0) + 1
-        # ensure that sample_x,y have only 4 meaningful digits to avoid bogus precision
-        if sample_x is not None:
-            sample_x = round(sample_x, 4)
-        if sample_y is not None:
-            sample_y = round(sample_y, 4)
-
-        if station_x is not None and station_y is not None and sample_x is None:
-            coord_failures += 1
-
-        coord_prov = build_coord_provenance(
-            instrument="HELIX",
-            transform_version=transform_name,
-            transform_yaml_sha256=yaml_sha256 or "",
-            transformer_version=transformer_version,
-            pipeline_version=PIPELINE_VERSION,
-            source_timestamp=shot_ts,
-            source_timestamp_origin=ts_origin,
-            station_coord_source={
-                "kind": "helix_experiment_log",
-                "spreadsheet_item_id": experiment_log_source["item_id"],
-                "spreadsheet_row_index": int(row_idx),
-                "spreadsheet_pdv_filename": row.get("PDV_FileName"),
-            },
-            dagster_run_id=run_id,
-        )
-
-        metadata = {
-            "Flyer_Row": nan_to_none(row.get("Flyer_Row")),
-            "Flyer_Column": nan_to_none(row.get("Flyer_Column")),
-            "Station_X": station_x,
-            "Station_Y": station_y,
-            "Sample_X": sample_x,
-            "Sample_Y": sample_y,
-            "coord_provenance": coord_prov,
-        }
-        # Ensure all values are JSON-serializable
-        metadata = json.loads(json.dumps(metadata, cls=NpEncoder))
-
-        try:
-            girder.addMetadataToItem(pdv_item["_id"], metadata)
-            written_count += 1
-        except Exception as exc:
-            context.log.error(
-                f"Failed to write metadata for row {row_idx}, item {pdv_item['_id']}: {exc}"
-            )
-            write_errors.append({"row": row_idx, "error": str(exc)})
-
-    if naive_timestamps_count > 0:
+    if write_summary["naive_timestamps_count"] > 0:
         context.log.warning(
             "Spreadsheet contained %d naive Timestamp values; "
             "interpreted as UTC. Set an explicit timezone in the "
             "station export to remove this ambiguity.",
-            naive_timestamps_count,
+            write_summary["naive_timestamps_count"],
         )
 
+    if config.dry_run:
+        context.log.info(
+            "DRY RUN — would have written coordinate metadata to %d "
+            "matched pdv_trace item(s); no Girder writes performed.",
+            write_summary["simulated_count"],
+        )
+
+    version_counter = write_summary["version_counter"]
+    rows_with_pdv = count_rows_with_pdv(df)
+    igsn_mismatch_count = sum(
+        1 for i in pdv_issues if i.get("type") == "igsn_mismatch"
+    )
     context.add_output_metadata(
         {
-            "items_enriched": MetadataValue.int(written_count),
-            "coordinate_transform_failures": MetadataValue.int(coord_failures),
-            "naive_timestamps": MetadataValue.int(naive_timestamps_count),
+            "dry_run": MetadataValue.bool(config.dry_run),
+            "inventory_count": MetadataValue.int(len(inventory)),
+            "matched_count": MetadataValue.int(len(matches)),
+            "rows_with_pdv": MetadataValue.int(rows_with_pdv),
+            "items_enriched": MetadataValue.int(write_summary["written_count"]),
+            "items_simulated": MetadataValue.int(write_summary["simulated_count"]),
+            "write_errors_count": MetadataValue.int(len(write_summary["write_errors"])),
+            "igsn_mismatch_count": MetadataValue.int(igsn_mismatch_count),
+            "coordinate_transform_failures": MetadataValue.int(
+                write_summary["coord_failures"]
+            ),
+            "transform_version_count": MetadataValue.int(len(version_counter)),
+            "yaml_sha256_present": MetadataValue.bool(yaml_sha256 is not None),
             "transform_versions_used": MetadataValue.text(
                 ", ".join(f"{k}={v}" for k, v in sorted(version_counter.items()))
                 or "none"
@@ -327,202 +211,92 @@ def enriched_pdv_metadata(
         }
     )
     return {
-        "written_count": written_count,
-        "write_errors": write_errors,
-        "coord_failures": coord_failures,
-        "version_counter": version_counter,
-        "naive_timestamps_count": naive_timestamps_count,
-        "yaml_sha256": yaml_sha256,
-    }
-
-
-@asset(group_name="helix_spreadsheet")
-def alpss_results_inventory(
-    context: AssetExecutionContext,
-    girder: GirderConnection,
-) -> list:
-    """Fetch ALPSS result items via the /aimdl/datafiles endpoint.
-
-    Returns items with meta.data_type='pdv_alpss_result'. Used for
-    quality reporting on ALPSS processing completeness.
-    """
-    items = fetch_all_aimdl_datafiles(girder, ALPSS_RESULT_DATA_TYPE)
-
-    igsns = set()
-    for item in items:
-        igsn = item.get("meta", {}).get("igsn")
-        if igsn:
-            igsns.add(igsn)
-
-    context.add_output_metadata({
-        "item_count": MetadataValue.int(len(items)),
-        "unique_igsns": MetadataValue.int(len(igsns)),
-        "data_type": MetadataValue.text(ALPSS_RESULT_DATA_TYPE),
-    })
-    return items
-
-
-@asset(group_name="helix_spreadsheet")
-def quality_report(
-    context: AssetExecutionContext,
-    validated_rows: dict,
-    pdv_cross_references: dict,
-    enriched_pdv_metadata: dict,
-    alpss_results_inventory: list,
-) -> dict:
-    """Aggregate all issues and ALPSS completeness metrics."""
-    igsn_issues = validated_rows["igsn_issues"]
-    pdv_issues = pdv_cross_references["pdv_issues"]
-    write_errors = enriched_pdv_metadata["write_errors"]
-    matches = pdv_cross_references["matches"]
-
-    # ALPSS completeness: which matched PDV traces have ALPSS results?
-    alpss_igsns = set()
-    for item in alpss_results_inventory:
-        igsn = item.get("meta", {}).get("igsn")
-        if igsn:
-            alpss_igsns.add(igsn)
-
-    matched_igsns = set()
-    df = validated_rows["dataframe"]
-    for row_idx in matches:
-        row_igsn = df.loc[row_idx].get("valid_igsn")
-        if row_igsn:
-            matched_igsns.add(row_igsn)
-
-    igsns_with_alpss = matched_igsns & alpss_igsns
-    igsns_without_alpss = matched_igsns - alpss_igsns
-
-    report = {
-        "igsn_issues": igsn_issues,
+        "dry_run": config.dry_run,
+        "inventory_count": len(inventory),
+        "matched_count": len(matches),
+        "rows_with_pdv": rows_with_pdv,
         "pdv_issues": pdv_issues,
-        "write_errors": write_errors,
-        "alpss_completeness": {
-            "matched_igsns": len(matched_igsns),
-            "igsns_with_alpss_results": len(igsns_with_alpss),
-            "igsns_without_alpss_results": len(igsns_without_alpss),
-            "missing_igsns": sorted(igsns_without_alpss),
-        },
-        "summary": {
-            "total_igsn_issues": len(igsn_issues),
-            "total_pdv_issues": len(pdv_issues),
-            "total_write_errors": len(write_errors),
-            "alpss_coverage_pct": (
-                round(100 * len(igsns_with_alpss) / len(matched_igsns), 1)
-                if matched_igsns else 0.0
-            ),
-        },
+        "written_count": write_summary["written_count"],
+        "simulated_count": write_summary["simulated_count"],
+        "write_errors": write_summary["write_errors"],
+        "coord_failures": write_summary["coord_failures"],
+        "version_counter": version_counter,
+        "yaml_sha256": yaml_sha256,
+        "naive_timestamps_count": write_summary["naive_timestamps_count"],
     }
 
-    context.add_output_metadata({
-        "total_igsn_issues": MetadataValue.int(len(igsn_issues)),
-        "total_pdv_issues": MetadataValue.int(len(pdv_issues)),
-        "total_write_errors": MetadataValue.int(len(write_errors)),
-        "alpss_coverage_pct": MetadataValue.float(
-            report["summary"]["alpss_coverage_pct"]
-        ),
-        "igsns_without_alpss": MetadataValue.int(len(igsns_without_alpss)),
-    })
-    return report
 
-
-@asset(group_name="helix_spreadsheet")
-def processing_manifest(
+@asset(
+    group_name="helix_spreadsheet",
+    partitions_def=HELIX_EXPERIMENT_LOG_PARTITIONS,
+)
+def pdv_processing_manifest(
     context: AssetExecutionContext,
-    experiment_log_source: dict,
-    quality_report: dict,
-    validated_rows: dict,
-    pdv_cross_references: dict,
-    enriched_pdv_metadata: dict,
+    config: HelixSpreadsheetConfig,
+    pdv_log: dict,
+    pdv_data: dict,
     girder: GirderConnection,
 ) -> dict:
-    """Write a processing status record to the source spreadsheet's Girder item.
+    """Durable boundary: write meta.processing_status to source log item(s).
 
-    This provides:
-    - Audit trail: persistent record of what the pipeline did
-    - Idempotency: sensor can check before triggering reruns
-    - Cross-system visibility: Girder UI shows processing status
+    Summarizes the run's issues and writes a processing manifest back to
+    each source ``pdv_experiment_log`` Girder item, giving an audit
+    trail, sensor idempotency, and cross-system visibility. With
+    ``config.dry_run`` True (the default) the manifest is computed but
+    not written. ``manifest_written`` is False only if a real per-item
+    write failed.
     """
-    item_id = experiment_log_source["item_id"]
-    df = validated_rows["dataframe"]
-    total_rows = len(df)
-    valid_igsn_count = int(df["valid_igsn"].notna().sum())
-    matched_count = len(pdv_cross_references["matches"])
-    written_count = enriched_pdv_metadata["written_count"]
-    coord_failures = enriched_pdv_metadata.get("coord_failures", 0)
-
-    igsn_issues = validated_rows["igsn_issues"]
-    pdv_issues = pdv_cross_references["pdv_issues"]
-    write_errors = enriched_pdv_metadata["write_errors"]
-
-    issues_summary = {
-        "igsn_invalid": sum(1 for i in igsn_issues if i.get("issue") == "invalid_format"),
-        "igsn_missing": sum(1 for i in igsn_issues if i.get("issue") == "missing"),
-        "pdv_not_found": sum(1 for i in pdv_issues if i.get("type") == "not_found"),
-        "pdv_ambiguous": sum(1 for i in pdv_issues if i.get("type") == "ambiguous"),
-        "igsn_mismatch": sum(1 for i in pdv_issues if i.get("type") == "igsn_mismatch"),
-        "write_errors": len(write_errors),
-        "coord_failures": coord_failures,
-    }
-
-    has_issues = any(v > 0 for v in issues_summary.values())
-    status = "completed_with_warnings" if has_issues else "completed_clean"
+    summary = summarize_pdv_processing(pdv_log, pdv_data)
 
     try:
         run_id = context.run.run_id
     except Exception:
         run_id = "direct-invocation"
 
-    manifest = {
-        "last_processed": datetime.now(timezone.utc).isoformat(),
-        "dagster_run_id": run_id,
-        "pipeline_version": PIPELINE_VERSION,
-        "total_rows": total_rows,
-        "rows_valid_igsn": valid_igsn_count,
-        "rows_matched_pdv": matched_count,
-        "rows_enriched": written_count,
-        "status": status,
-        "issues_summary": issues_summary,
-    }
+    source_item_ids = pdv_log["source_item_ids"]
+    write_failed = False
+    for item_id in source_item_ids:
+        manifest = write_processing_manifest(
+            girder, item_id, summary, run_id=run_id, dry_run=config.dry_run
+        )
+        if manifest.get("write_failed"):
+            write_failed = True
 
-    # Write to the source spreadsheet's Girder item
-    try:
-        girder.addMetadataToItem(item_id, {"processing_status": manifest})
+    manifest_written = bool(source_item_ids) and not write_failed
+
+    if config.dry_run:
         context.log.info(
-            "Wrote processing manifest to Girder item %s: status=%s",
-            item_id,
-            status,
+            "DRY RUN — would have written meta.processing_status to %d "
+            "source log item(s); no Girder writes performed.",
+            len(source_item_ids),
         )
-    except Exception as exc:
-        context.log.error(
-            "Failed to write processing manifest to Girder item %s: %s",
-            item_id,
-            exc,
-        )
-        manifest["write_failed"] = True
 
-    context.add_output_metadata({
-        "status": MetadataValue.text(status),
-        "total_rows": MetadataValue.int(total_rows),
-        "rows_enriched": MetadataValue.int(written_count),
-        "has_issues": MetadataValue.bool(has_issues),
-        "source_item_id": MetadataValue.text(item_id),
-    })
-
-    return manifest
+    context.add_output_metadata(
+        {
+            "dry_run": MetadataValue.bool(config.dry_run),
+            "status": MetadataValue.text(summary["status"]),
+            "manifest_written": MetadataValue.bool(manifest_written),
+            "source_item_count": MetadataValue.int(len(source_item_ids)),
+            "rows_enriched": MetadataValue.int(summary["rows_enriched"]),
+        }
+    )
+    return {
+        "dry_run": config.dry_run,
+        "status": summary["status"],
+        "manifest_written": manifest_written,
+        "issues_summary": summary["issues_summary"],
+        "total_rows": summary["total_rows"],
+        "rows_valid_igsn": summary["rows_valid_igsn"],
+        "rows_matched_pdv": summary["rows_matched_pdv"],
+        "rows_enriched": summary["rows_enriched"],
+    }
 
 
 process_helix_assets_job = define_asset_job(
     name="process_helix_assets_job",
     selection=AssetSelection.assets(
-        experiment_log_source,
-        raw_experiment_log,
-        pdv_trace_inventory,
-        validated_rows,
-        pdv_cross_references,
-        enriched_pdv_metadata,
-        alpss_results_inventory,
-        quality_report,
-        processing_manifest,
+        pdv_log,
+        pdv_data,
+        pdv_processing_manifest,
     ),
 )
