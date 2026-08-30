@@ -1,3 +1,24 @@
+> ## ⛔ SUPERSEDED — 2026-08-30
+>
+> **The central conclusion of this document is wrong.** It diagnoses the
+> `C1--…` family as an upstream Girder mis-tagging defect and recommends
+> excluding those items from HELIX/ALPSS scope (options A/B/C below). A
+> live re-probe on 2026-08-30 disproved that:
+>
+> - The tagging is **correct**. `C1--20250807--00001.csv` is genuinely a
+>   `pdv_trace`; `C1--20250807--00001-results.csv` is genuinely its ALPSS
+>   result. Same stem/suffix structure as the IGSN convention.
+> - C-naming is **not legacy**. It is ~70% of `pdv_trace` and currently
+>   growing — 2026-08 is the largest month on record. Excluding it would
+>   have discarded 47,408 real items, the majority of HELIX.
+> - The real defect was in **our own regex** — a `_ch<N>` stem-tail rule
+>   that encoded the IGSN convention only. Fixed in `0e3276e`; all 66,848
+>   ALPSS items now resolve to a unique parent.
+>
+> The *measurements* below are still a valid snapshot of 2026-05-17. The
+> interpretation from "The real issue" onward is not. Read
+> **`probe_c1_naming.md`** instead.
+
 # HELIX/ALPSS coverage probe — results
 
 - **Date:** 2026-05-17
