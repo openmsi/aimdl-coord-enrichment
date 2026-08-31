@@ -3,7 +3,12 @@ import re
 
 HELIX_FOLDER_ID = os.environ.get("HELIX_FOLDER_ID")
 
-IGSN_PATTERN = re.compile(r"[A-Za-z]{6}\d{5}(?:-[A-Za-z0-9]+)?")
+# IGSNs carry a variable number of hyphen-delimited suffix segments:
+# JHAMAL00018 (none), JHAMAL00018-005 (one), NWXMAB00010-002-001 (two).
+# `*`, not `?` — a `?` captured only the first segment, silently truncating
+# NWXMAB00010-002-001 to NWXMAB00010-002 and manufacturing a false
+# igsn_consistency ERROR against the item's full meta.igsn.
+IGSN_PATTERN = re.compile(r"[A-Za-z]{6}\d{5}(?:-[A-Za-z0-9]+)*")
 
 # /aimdl endpoint data types
 # These correspond to meta.data_type values set on Girder items

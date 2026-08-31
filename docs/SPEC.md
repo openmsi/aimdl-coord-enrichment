@@ -3,7 +3,7 @@
 > **Status:** Reverse-engineered from source + test suite at version `0.6.0`.
 > **Last refreshed:** 2026-08-30 — §3.2 counts re-measured against live prod;
 > §C1/§C9/§C10 updated to the 3-asset partitioned HELIX flow (issue #31); §C4
-> updated for the two production filename conventions.
+> updated for the production filename conventions; IGSN pattern corrected.
 > **Method:** This is a *descriptive* spec — every requirement is extracted from
 > code behavior that the existing tests pin. It is written so it can also serve
 > as a *prescriptive* spec going forward: each requirement has a stable ID, and
@@ -41,7 +41,7 @@ in-scope item, regardless of which source the coordinates came from.
 |---|---|
 | **Item** | A Girder item (a file + `meta` dict). Identified by `_id`. |
 | **`data_type`** | `meta.data_type` on an item. The primary routing key (`pdv_trace`, `xrd_raw`, …). |
-| **IGSN** | Sample identifier. Pattern `[A-Za-z]{6}\d{5}(?:-[A-Za-z0-9]+)?`. |
+| **IGSN** | Sample identifier. Pattern `[A-Za-z]{6}\d{5}(?:-[A-Za-z0-9]+)*` — a 6-letter prefix, 5 digits, then **zero or more** hyphen-delimited segments (`JHAMAL00018`, `JHAMAL00018-005`, `NWXMAB00010-002-001`). Matched unanchored, so it also extracts an IGSN embedded in a filename. |
 | **Station coordinates** | Instrument-frame position in mm (`Station_X/Y`). The raw input. |
 | **Sample coordinates** | Sample-frame position in mm (`Sample_X/Y`). The deliverable. |
 | **Station → Sample transform** | A versioned coordinate transform, selected by shot timestamp. Provided by the external `coordinate-transformer` package. |
@@ -80,8 +80,8 @@ Counts from `/aimdl/count`, measured 2026-08-30.
 `pdv_alpss_results` (plural) was in scope at 1,526 items in the 2026-05-17
 snapshot and **no longer exists** as a `data_type`.
 
-Two filename conventions are in concurrent production use for the HELIX PDV
-family — see SPEC‑ALPSS‑01. Both are first-class; neither is legacy.
+Several filename conventions are in concurrent production use for the HELIX
+PDV family — see SPEC‑ALPSS‑01. All are first-class; none is legacy.
 
 > **Scope caveat.** `/aimdl/datafiles` returns only items carrying `meta.igsn`,
 > so the pipeline sees 7,708 of the 8,539 `pdv_trace` items. The ~831 without an
@@ -254,17 +254,22 @@ Job name `process_helix_assets_job` is preserved from the 9-asset design.
   ERROR check fires if any HELIX item is left unresolved. *Tests:
   `test_coord_enrichment_provenance_tagging.py`, `all_helix_alpss_tagged`.*
 
-  **Two filename conventions are in concurrent production use**, and both must
-  resolve. An ALPSS filename is `<stem><sep><output>.<ext>` where `sep` is `-`
-  or `_`; the parent is the unique `<stem>.csv` in the `pdv_trace` pool.
+  **Multiple filename conventions are in concurrent production use**, and all
+  must resolve. An ALPSS filename is `<stem><sep><output>.<ext>` where `sep` is
+  `-` or `_`; the parent is the unique `<stem>.csv` in the `pdv_trace` pool.
+  At least three stem shapes are observed in prod:
 
-  | convention | trace | ALPSS child |
+  | shape | trace | ALPSS child |
   |---|---|---|
   | IGSN-named | `JHAMAC00003-S1R4C3_2026-02-18_18-45-56_shot01_ch1.csv` | `…_ch1-iq.png` |
   | C-named | `C1--20250807--00001.csv` | `C1--20250807--00001-results.csv` |
+  | C/IGSN hybrid (from 2026‑07) | `C1--NWXMAB00010-002-001_2026-07-06_21-45-25_shot01--00000.csv` | `…--00000-results.csv` |
 
-  Neither is legacy. Measured 2026‑08‑30, C-named files are ~70% of `pdv_trace`
-  and ~71% of both ALPSS types, and the convention is currently in use: it ran
+  The list is **open** — treat it as observed, not exhaustive. This is precisely
+  why the rule keys on structure (`<sep><output>.<ext>` + a unique parent)
+  rather than on any convention's shape: a fourth shape needs no code change.
+  None is legacy. Measured 2026‑08‑30, C-named files are ~70% of `pdv_trace`
+  and ~71% of both ALPSS types, and the family is currently in use: it ran
   Aug–Oct 2025, was replaced by IGSN naming Nov 2025 – May 2026, and **reverted**
   in Jun/Jul 2026. 2026‑08 is the largest month on record.
 
@@ -573,6 +578,12 @@ Adds: **C6, C8.** ~32.9k more derived items + state reporting/manifests.
 - ~~**D1** — `enriched_pdv_metadata` docstring says it writes IGSN; it does
   not.~~ **RESOLVED.** The asset no longer exists; its successor `pdv_data`
   documents exactly what it writes. The underlying policy question survives as Q6.
+- ~~**D7** — `IGSN_PATTERN` allowed at most one hyphen-delimited suffix segment,
+  silently truncating two-segment IGSNs (`NWXMAB00010-002-001` →
+  `NWXMAB00010-002`) and manufacturing a false `igsn_consistency` ERROR against
+  the item's full `meta.igsn`.~~ **RESOLVED** 2026‑08‑30 — found by the first
+  dry run of `process_helix_assets_job`; affected 2 of 214 HELIX partitions.
+  *Tests: `test_validate_igsn_roundtrips_production_shapes`.*
 - **D2** — `overwrite.should_write` docstring lists reason order differently from
   the code's check order (`transform_version` is checked before
   `station_coord_source`). No behavioral impact under current tests, which vary
