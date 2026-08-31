@@ -82,6 +82,81 @@ def match_pdv_rows(df, pdv_items):
     return matches, pdv_issues
 
 
+# A HELIX experiment log records one row per *candidate* shot. Before firing,
+# the station measures PDV return power and decides whether to proceed; when it
+# declines, the row still carries a real flyer position but no shot is taken and
+# no PDV trace is produced. Such a row is not a coverage gap — there is nothing
+# to enrich, by design.
+#
+# The log states the outcome in its Notes column. Measured across all 214
+# production logs (2026-08-31): every one of the 3,584 rows with a PDV_FileName
+# reads exactly "Laser triggered", and all 1,506 rows without one carry a skip
+# reason instead ("Laser skipped due to invalid ...", "Laser skipped due to
+# detection ...", "Skipped due to failed flyer ...", and list-valued variants).
+#
+# Test for the positive rather than enumerating skip reasons, so a new skip
+# string added upstream is still read as not-fired. Do NOT key on
+# Laser_Target_Energy_mJ: 623 of the 1,506 skipped rows carry a non-zero value
+# (the intended energy, recorded before the decision), so energy misclassifies
+# 41% of them as fired.
+FIRED_NOTE = "Laser triggered"
+
+
+def _cell_is_blank(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and math.isnan(value):
+        return True
+    return str(value).strip() == ""
+
+
+def shot_fired(row) -> bool:
+    """True if this row's candidate shot actually fired.
+
+    A row with a PDV_FileName always fired (empirically 3,584/3,584). Otherwise
+    the Notes column decides.
+    """
+    if not _cell_is_blank(row.get("PDV_FileName")):
+        return True
+    return str(row.get("Notes", "")).strip() == FIRED_NOTE
+
+
+def skip_reason(row) -> str:
+    """Short reason a candidate shot did not fire, for grouped reporting."""
+    note = str(row.get("Notes", "")).strip()
+    if not note or note.lower() == "nan":
+        return "unrecorded"
+    return note[:60]
+
+
+def classify_shots(df):
+    """Split a log into fired / not-fired, with skip reasons grouped.
+
+    Returns ``{"fired": int, "not_fired": int, "not_fired_by_reason": {...},
+    "fired_but_unnamed": int}``. ``fired_but_unnamed`` counts rows that claim to
+    have fired yet name no PDV file — zero across the current corpus, surfaced
+    so it does not pass unnoticed if upstream behaviour changes.
+    """
+    fired = not_fired = fired_but_unnamed = 0
+    reasons: dict[str, int] = {}
+    for _, row in df.iterrows():
+        named = not _cell_is_blank(row.get("PDV_FileName"))
+        if shot_fired(row):
+            fired += 1
+            if not named:
+                fired_but_unnamed += 1
+        else:
+            not_fired += 1
+            r = skip_reason(row)
+            reasons[r] = reasons.get(r, 0) + 1
+    return {
+        "fired": fired,
+        "not_fired": not_fired,
+        "not_fired_by_reason": dict(sorted(reasons.items(), key=lambda kv: -kv[1])),
+        "fired_but_unnamed": fired_but_unnamed,
+    }
+
+
 def count_rows_with_pdv(df):
     """Count rows whose PDV_FileName is non-null, non-NaN, non-empty."""
     return sum(

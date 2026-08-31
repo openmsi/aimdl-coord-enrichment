@@ -70,10 +70,32 @@ def eval_zero_inventory(md):
 
 
 def eval_pdv_match_rate(md):
-    """WARN if fewer than 50% of rows with PDV filenames were matched."""
+    """WARN if fewer than 50% of *fired* shots were matched to a PDV trace.
+
+    A HELIX log rows every candidate shot; the station decides at fire time
+    whether to proceed. Rows for shots that never fired carry no PDV filename
+    and have no trace to match, so counting them would make a fully-successful
+    partition look half-failed. The denominator is rows with a filename, which
+    is the same population as fired shots (see spreadsheet.shot_fired).
+    """
     rows_with_pdv = int(md.get("rows_with_pdv", 0))
     matched_count = int(md.get("matched_count", 0))
+    not_fired = int(md.get("shots_not_fired", 0))
     rate = matched_count / rows_with_pdv if rows_with_pdv > 0 else 0.0
+    if rows_with_pdv == 0:
+        return AssetCheckResult(
+            passed=True,
+            severity=AssetCheckSeverity.WARN,
+            metadata={
+                "shots_not_fired": not_fired,
+                "rows_with_pdv_filename": 0,
+            },
+            description=(
+                f"No shots fired in this partition ({not_fired} candidate "
+                "shot(s) skipped at the station); nothing to match."
+            ),
+        )
+    suffix = f"; {not_fired} candidate shot(s) not fired" if not_fired else ""
     return AssetCheckResult(
         passed=rate >= 0.5,
         severity=AssetCheckSeverity.WARN,
@@ -81,8 +103,12 @@ def eval_pdv_match_rate(md):
             "rows_with_pdv_filename": rows_with_pdv,
             "matched_count": matched_count,
             "match_rate": round(rate, 3),
+            "shots_not_fired": not_fired,
         },
-        description=f"PDV match rate: {rate:.1%} ({matched_count}/{rows_with_pdv})",
+        description=(
+            f"PDV match rate: {rate:.1%} ({matched_count}/{rows_with_pdv})"
+            f"{suffix}"
+        ),
     )
 
 

@@ -13,6 +13,8 @@ import pytest
 
 from aimdl_coord_enrichment.coordinates import _COORD_TRANSFORMER
 from aimdl_coord_enrichment.spreadsheet import (
+    classify_shots,
+    shot_fired,
     count_rows_with_pdv,
     match_pdv_rows,
     normalize_experiment_log,
@@ -317,3 +319,76 @@ def test_write_pdv_metadata_dry_run_skips_writes():
     assert summary["write_errors"] == []
     # Transform still computed in a dry run.
     assert summary["version_counter"]
+
+
+# --- candidate shots that never fired (station survey 2026-08-31) -----------
+# A HELIX log rows every *candidate* shot. The station measures PDV return
+# power and decides whether to fire; when it declines, the row keeps a real
+# flyer position but produces no trace. Measured across all 214 production
+# logs: 3,584/3,584 rows with a PDV_FileName read Notes == "Laser triggered",
+# and all 1,506 rows without one carry a skip reason.
+
+def _row(pdv=None, notes="Laser triggered"):
+    return {"PDV_FileName": pdv, "Notes": notes}
+
+
+@pytest.mark.parametrize("notes", [
+    "Laser skipped due to invalid signal",
+    "Laser skipped due to detection failure",
+    "Laser skipped",
+    "['Laser skipped', 'Laser skipped']",     # list-valued cell, seen in prod
+    "Skipped due to failed flyer detection",
+    'Heating error: TypeError("He',
+    "",                                        # unrecorded
+])
+def test_shot_not_fired_for_every_observed_skip_note(notes):
+    assert shot_fired(_row(pdv=float("nan"), notes=notes)) is False
+
+
+def test_shot_fired_only_on_the_positive_note():
+    """Tested as a positive match so a new upstream skip string still reads as
+    not-fired, rather than silently counting as a fired shot."""
+    assert shot_fired(_row(pdv=float("nan"), notes="Laser triggered")) is True
+    assert shot_fired(_row(pdv=float("nan"), notes="Laser triggered!")) is False
+
+
+def test_a_named_row_counts_as_fired_regardless_of_notes():
+    assert shot_fired(_row(pdv="C1--20251023--00282", notes="anything")) is True
+
+
+def test_classify_shots_groups_skip_reasons():
+    df = pd.DataFrame([
+        _row(pdv="C1--a"),
+        _row(pdv="C1--b"),
+        _row(pdv=float("nan"), notes="Laser skipped due to invalid signal"),
+        _row(pdv=float("nan"), notes="Laser skipped due to invalid signal"),
+        _row(pdv=None, notes="Skipped due to failed flyer detection"),
+    ])
+    out = classify_shots(df)
+    assert out["fired"] == 2
+    assert out["not_fired"] == 3
+    assert out["not_fired_by_reason"] == {
+        "Laser skipped due to invalid signal": 2,
+        "Skipped due to failed flyer detection": 1,
+    }
+    assert out["fired_but_unnamed"] == 0
+
+
+def test_classify_shots_surfaces_fired_but_unnamed():
+    """Zero across the current corpus; surfaced so a change upstream is visible
+    rather than silently reducing coverage."""
+    df = pd.DataFrame([_row(pdv=float("nan"), notes="Laser triggered")])
+    out = classify_shots(df)
+    assert out["fired"] == 1 and out["fired_but_unnamed"] == 1
+
+
+def test_laser_energy_is_not_a_valid_discriminator():
+    """623 of 1,506 skipped rows carry a non-zero Laser_Target_Energy_mJ (the
+    intended energy, recorded before the decision), so energy would
+    misclassify 41% of them as fired. Notes is the signal."""
+    skipped_with_energy = {
+        "PDV_FileName": float("nan"),
+        "Notes": "Laser skipped due to invalid signal",
+        "Laser_Target_Energy_mJ": 1116.54,
+    }
+    assert shot_fired(skipped_with_energy) is False

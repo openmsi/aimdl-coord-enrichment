@@ -22,6 +22,7 @@ from aimdl_coord_enrichment.partitions import (
 from aimdl_coord_enrichment.provenance import compute_yaml_sha256, get_transformer_version
 from aimdl_coord_enrichment.resources import GirderConnection
 from aimdl_coord_enrichment.spreadsheet import (
+    classify_shots,
     count_rows_with_pdv,
     match_pdv_rows,
     normalize_experiment_log,
@@ -142,6 +143,10 @@ def pdv_data(
     inventory = fetch_all_aimdl_datafiles(girder, PDV_TRACE_DATA_TYPE)
     matches, pdv_issues = match_pdv_rows(df, inventory)
 
+    # Rows whose candidate shot never fired have no trace to enrich, by design.
+    # Counted and reported, excluded from the match-rate denominator.
+    shots = classify_shots(df)
+
     try:
         yaml_sha256 = compute_yaml_sha256(_COORD_YAML)
     except FileNotFoundError:
@@ -195,6 +200,13 @@ def pdv_data(
             "inventory_count": MetadataValue.int(len(inventory)),
             "matched_count": MetadataValue.int(len(matches)),
             "rows_with_pdv": MetadataValue.int(rows_with_pdv),
+            "shots_fired": MetadataValue.int(shots["fired"]),
+            "shots_not_fired": MetadataValue.int(shots["not_fired"]),
+            "not_fired_by_reason": MetadataValue.text(
+                ", ".join(f"{k} ({v})" for k, v in shots["not_fired_by_reason"].items())
+                or "none"
+            ),
+            "fired_but_unnamed": MetadataValue.int(shots["fired_but_unnamed"]),
             "items_enriched": MetadataValue.int(write_summary["written_count"]),
             "items_simulated": MetadataValue.int(write_summary["simulated_count"]),
             "write_errors_count": MetadataValue.int(len(write_summary["write_errors"])),
@@ -215,6 +227,7 @@ def pdv_data(
         "inventory_count": len(inventory),
         "matched_count": len(matches),
         "rows_with_pdv": rows_with_pdv,
+        "shots": shots,
         "pdv_issues": pdv_issues,
         "written_count": write_summary["written_count"],
         "simulated_count": write_summary["simulated_count"],
