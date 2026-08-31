@@ -40,8 +40,17 @@ HELIX_DERIVED_DATA_TYPES: frozenset[str] = frozenset(
 )
 HELIX_LEAF_DATA_TYPES: frozenset[str] = frozenset()  # pdv_trace is external
 
-MAXIMA_LEAF_DATA_TYPES: frozenset[str] = frozenset({"xrd_raw", "xrf_raw"})
-MAXIMA_DERIVED_DATA_TYPES: frozenset[str] = frozenset({"xrd_derived"})
+# Every MAXIMA data_type is a leaf: raw measurements and derived products
+# alike take their station coordinates from the run's instructions.txt,
+# indexed by the scan_point_<i> in their own filename. xrd_derived was
+# previously modelled as "derived" and inherited from its parent master.h5,
+# but the parent read the same instructions.txt, so inheritance recorded a
+# path rather than an origin — and required prov.wasDerivedFrom links that
+# are absent on the entire population.
+MAXIMA_LEAF_DATA_TYPES: frozenset[str] = frozenset(
+    {"xrd_raw", "xrf_raw", "xrd_derived", "xrd_visualization"}
+)
+MAXIMA_DERIVED_DATA_TYPES: frozenset[str] = frozenset()
 
 # External pre-enriched data types that derived items may inherit from.
 # Not written to by the new DAG.
@@ -50,9 +59,13 @@ EXTERNAL_LEAF_DATA_TYPES: frozenset[str] = frozenset({"pdv_trace"})
 # Data types explicitly out of scope for the new DAG. Listed here so
 # tests and audits can distinguish "unknown data_type" from
 # "intentionally excluded data_type."
+# Calibrant data is deliberately excluded pending a data cleanup: the
+# calibrate/ folders are internally inconsistent (no instructions.txt in
+# 43/43, no scan_point_<i> index on any of 125 files), so there is no key
+# to look a coordinate up with. Revisit as its own piece of work.
 OUT_OF_SCOPE_DATA_TYPES: frozenset[str] = frozenset(
     {"xrd_metadata", "pdv_experiment_log", "xrd_calibrant_raw",
-     "xrd_calibrant_derived", "unclassified"}
+     "xrd_calibrant_derived", "unclassified", "nmd_raw", "nmd_project"}
 )
 
 

@@ -25,6 +25,11 @@ from aimdl_coord_enrichment.coord_enrichment.check_support import (
     no_materialization_result,
 )
 from aimdl_coord_enrichment.coord_enrichment.config import CoordEnrichmentConfig
+from aimdl_coord_enrichment.coord_enrichment.exclusions import (
+    NO_RESOLVABLE_PARENT,
+    PARENT_NOT_ENRICHED,
+    ExclusionLog,
+)
 from aimdl_coord_enrichment.coord_enrichment.inheritance import (
     inherit_from_parent,
     inherited_station_coord_source,
@@ -82,6 +87,7 @@ def enriched_helix_alpss(
     write_errors: list[dict[str, Any]] = []
     resolution_errors: list[dict[str, Any]] = []
     version_counter: dict[str, int] = {}
+    excluded = ExclusionLog()
 
     for item in items:
         item_id = item.get("_id")
@@ -90,11 +96,15 @@ def enriched_helix_alpss(
         try:
             inherited = inherit_from_parent(item, girder)
         except ResolutionError as exc:
-            resolution_errors.append(
-                {"item_id": item_id, "name": name,
-                 "stage": "inherit_from_parent", "error": str(exc)}
+            # Either the item's name does not resolve to a parent trace, or the
+            # parent carries no coordinates yet. Both are properties of the
+            # input, not failures — see coord_enrichment/exclusions.py.
+            reason = (
+                PARENT_NOT_ENRICHED
+                if "coord" in str(exc).lower() or "station" in str(exc).lower()
+                else NO_RESOLVABLE_PARENT
             )
-            counts["resolution_errors"] += 1
+            excluded.add(reason, name, item_id)
             continue
 
         sample_x, sample_y = transform_with_named_version(
@@ -160,6 +170,10 @@ def enriched_helix_alpss(
             "coord_failures": MetadataValue.int(counts["coord_failures"]),
             "resolution_errors": MetadataValue.int(counts["resolution_errors"]),
             "write_errors": MetadataValue.int(len(write_errors)),
+            "in_scope": MetadataValue.int(counts["seen"] - excluded.total),
+            "excluded": MetadataValue.int(excluded.total),
+            "excluded_by_reason": MetadataValue.text(excluded.summary_text()),
+            "excluded_examples": MetadataValue.text(excluded.examples_text()),
             "transform_versions_used": MetadataValue.text(
                 ", ".join(f"{k}={v}" for k, v in sorted(version_counter.items()))
                 or "none"
@@ -172,6 +186,7 @@ def enriched_helix_alpss(
         "counts": counts,
         "write_errors": write_errors,
         "resolution_errors": resolution_errors,
+        "excluded": excluded.as_dict(),
         "version_counter": version_counter,
         "dry_run": config.dry_run,
     }
@@ -198,6 +213,7 @@ def enrichment_success_rate_helix_alpss(context):
         resolution_errors=int(md.get("resolution_errors", 0)),
         write_errors_count=int(md.get("write_errors", 0)),
         partition_label=str(md.get("partition", context.partition_key)),
+        excluded=int(md.get("excluded", 0)),
     )
 
 

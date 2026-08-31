@@ -73,9 +73,10 @@ Counts from `/aimdl/count`, measured 2026-08-30.
 | HELIX | `pdv_alpss_result` | derived | inherit from parent `pdv_trace` | 7,428 |
 | MAXIMA | `xrd_raw` | leaf | `instructions.txt` scan-point | 42,960 |
 | MAXIMA | `xrf_raw` | leaf | `instructions.txt` scan-point | 19,861 |
-| MAXIMA | `xrd_derived` | derived | inherit from parent `xrd_raw` master.h5 | 32,886 |
+| MAXIMA | `xrd_derived` | leaf | `instructions.txt` scan-point | 32,886 |
+| MAXIMA | `xrd_visualization` | leaf | `instructions.txt` scan-point | 23,905 |
 
-**~171,000 in-scope items** — roughly 2.3× the figure in the original snapshot.
+**~195,000 in-scope items.**
 
 `pdv_alpss_results` (plural) was in scope at 1,526 items in the 2026-05-17
 snapshot and **no longer exists** as a `data_type`.
@@ -83,18 +84,26 @@ snapshot and **no longer exists** as a `data_type`.
 Several filename conventions are in concurrent production use for the HELIX
 PDV family — see SPEC‑ALPSS‑01. All are first-class; none is legacy.
 
-> **Scope caveat.** `/aimdl/datafiles` returns only items carrying `meta.igsn`,
-> so the pipeline sees 7,708 of the 8,539 `pdv_trace` items. The ~831 without an
-> IGSN are invisible to discovery and silently outside every coverage metric.
-
 \* `pdv_trace` is enriched by the **spreadsheet DAG**, and is treated as an
 *external / pre-enriched* parent by the coord_enrichment DAG's instrument
 registry (HELIX leaf set is intentionally empty there).
 
 **Explicitly out of scope:** `xrd_metadata`, `pdv_experiment_log`,
-`xrd_calibrant_raw`, `xrd_calibrant_derived`, `unclassified`, and the data types
-that appeared after the original snapshot and have never been assessed:
-`xrd_visualization` (23,905), `nmd_project` (487), `nmd_raw` (365).
+`unclassified`, `nmd_raw` (365), `nmd_project` (487), and:
+
+- **Calibrant data** (`xrd_calibrant_raw`, `xrd_calibrant_derived`, and the
+  untagged `calibrate/` files). Parked pending a data cleanup — decided
+  2026-08-31. Calibrants are physically samples and are processed the same way,
+  so this is not a statement about their value; the `calibrate/` folders are
+  simply inconsistent as stored (no `instructions.txt` in 43/43 runs, no
+  `scan_point_<i>` index on any of 125 files), leaving no key to look a
+  coordinate up with. Revisit as its own piece of work.
+- **Items with no `meta.igsn`.** `/aimdl/datafiles` and `/aimdl/partition`
+  filter on `meta.igsn`, so these are invisible to discovery — ~831 `pdv_trace`,
+  ~4,700 `xrd_raw`, and ~9,280 `xrf_raw` (47% of that type). Decided
+  2026-08-31: an un-annotated file is a test or otherwise unimportant artifact
+  for now, so this is a **deliberate scope boundary**, not a gap to close. It
+  does mean coverage denominators count only annotated items.
 
 --
 
@@ -295,41 +304,64 @@ Job name `process_helix_assets_job` is preserved from the 9-asset design.
   `Station_X/Y` or `coord_provenance`), the item shall be recorded as a
   resolution error, not written.
 
-### C5 — MAXIMA raw enrichment (`xrd_raw`, `xrf_raw`)
+### C5 — MAXIMA enrichment (one run at a time)
 
-- **SPEC‑MAXR‑01 — Self-fetching partition.** Each partition `(data_type, run)`
-  shall fetch its own items and its own `instructions.txt` via
-  `/aimdl/partition/details` keyed on the AIMD‑L run key. It depends on no
-  inventory or provenance asset. *Tests: `test_coord_enrichment_maxima_raw.py`.*
+*Scope: `xrd_raw`, `xrf_raw`, `xrd_derived`, `xrd_visualization`.*
+
+**The run is the unit of work.** One AIMD-L run — key
+`"<igsn>//<experiment_date>"` — produces one `instructions.txt`, and that file
+supplies the station coordinates for every file the run produced. Storage nests
+`raw/` inside the run folder while lineage runs the other way (the derived
+products are made *from* the raw measurements), but neither shape is a partition
+boundary. They materialize together, from one fetch of one coordinate table.
+
+- **SPEC‑MAXR‑01 — Self-fetching run partition.** Each partition shall fetch its
+  own items — once per in-scope data_type — and its own `instructions.txt` via
+  `/aimdl/partition/details` keyed on the run key. It depends on no inventory or
+  provenance asset. *Tests: `test_coord_enrichment_maxima_run.py`.*
 - **SPEC‑MAXR‑02 — Scan-point lookup.** Station coordinates come from
   `instructions.txt` (`sample.scan_points[i]` = `[x, y]`), where `i` is parsed
-  from the filename (`scan_point_<i>...`). Timestamp comes from
-  `meta.experiment_date`. *Tests: `test_parse_scan_point_index_*`,
-  `test_scan_point_coords_*`.*
+  from the **`scan_point_<i>` prefix** of the filename. The index is at the head,
+  not the tail: `scan_point_0_data_000001.h5` is scan point **0**, and the
+  trailing `000001` is a detector frame counter that would mis-map every
+  `_data_` file to `scan_points[1]`. Timestamp comes from `meta.experiment_date`.
+  *Tests: `test_parse_scan_point_index_*`, `test_scan_point_coords_*`.*
 - **SPEC‑MAXR‑03 — Missing/duplicate instructions.** Given no `instructions.txt`,
-  every item in the partition is recorded as a resolution error
-  (stage `instructions`). Given multiple, the first is used and the rest are
-  recorded as duplicate warnings. *Tests: missing/duplicate instructions tests.*
+  every item in the run is recorded as a resolution error (stage
+  `instructions`). Given multiple, the first is used and the rest are recorded as
+  duplicate warnings.
 - **SPEC‑MAXR‑04 — `instructions.txt` validation.** The payload must be JSON with
   `sample.scan_points` a non-empty list of numeric `[x, y]` pairs; any violation
   is a `ResolutionError`. *Tests: `test_parse_instructions_json_*`.*
+- **SPEC‑MAXR‑05 — Uniform treatment, recorded lineage.** Derived products take
+  their coordinates from the same `instructions.txt` as the raw measurements, not
+  by inheriting from a parent. Where `meta.prov.wasDerivedFrom` exists it is
+  copied into `station_coord_source.parent_item_id` as a **cross-reference**, but
+  it is not load-bearing: an item with no prov link enriches identically.
+  *Tests: `test_one_run_partition_covers_every_maxima_data_type`,
+  `test_derived_item_records_parent_lineage_without_depending_on_it`.*
 
-### C6 — MAXIMA derived enrichment (`xrd_derived`)
+> **Why not inheritance** (the former C6). `xrd_derived` used to inherit
+> `Station_X/Y` from its parent `scan_point_<i>_master.h5` via
+> `prov.wasDerivedFrom`. Both routes yield identical numbers — the parent reads
+> the same `instructions.txt` — so inheritance recorded a *path* rather than an
+> *origin*, and made the coordinate depend on links written by an external
+> plugin. Measured 2026-08-31, **0 of 528 sampled `xrd_derived` items carry
+> `prov.wasDerivedFrom` at all**, so that route could not run. Retiring it also
+> removed `AllPartitionMapping` (any raw change re-materialized every derived
+> partition), the parent-readiness fast-fail, the prov-validity check, and the
+> deferred "decision beta" repartitioning.
+>
+> Contrast HELIX ALPSS (C4), where inheritance is *necessary*: an ALPSS output
+> has no independent coordinate source. Every MAXIMA file carries its own index
+> into the run's table.
 
-- **SPEC‑MAXD‑01 — Inherit from master.h5.** Each `xrd_derived` item shall
-  inherit `Station_X/Y` + version from its parent (`scan_point_<i>_master.h5`),
-  linked via `prov.wasDerivedFrom` written upstream by `amdee_xrd`. *Tests:
-  `test_coord_enrichment_maxima_derived.py`.*
-- **SPEC‑MAXD‑02 — Parent-readiness gate.** Given the partition has items but
-  **zero** parent `xrd_raw` items are enriched, the asset shall fail fast with a
-  message naming `enriched_maxima_raw` and the `0/<total>` ratio; given partial
-  enrichment, it shall warn and continue. *Tests:
-  `test_fast_fails_when_no_parents_enriched`, partial-warn test.*
-- **SPEC‑MAXD‑03 — Provenance validity check.** An ERROR-severity check shall
-  verify the `amdee_xrd` prov links are present and resolvable (counts
-  `inherit_from_parent`-stage errors). *Tests: `maxima_xrd_derived_provenance_valid`.*
-- **SPEC‑MAXD‑04 — Raw scope filter.** Only `xrd_derived` items physically under a
-  `raw/` subfolder are in scope. *Tests: `filter_to_raw_subfolder` tests.*
+> **Former SPEC-MAXD-04 (raw/ scope filter) was a bug, now removed.** It kept
+> only `xrd_derived` items whose immediate folder was named `raw`. No derived
+> item is ever stored there — `raw/` holds the raw measurements — so the
+> predicate matched **0 of 30,215** items and the whole derived tier operated on
+> an empty set. It described where the parents live and was applied to the
+> children.
 
 ### C7 — Inventory & discovery
 
@@ -342,10 +374,12 @@ Job name `process_helix_assets_job` is preserved from the 9-asset design.
   `/aimdl/datafiles` (which strips meta). *Tests:
   `test_items_carry_full_meta_through_inventory`.*
 - **SPEC‑DISC‑01 — Event-driven discovery.** A sensor shall poll the partition
-  index for `xrd_raw`/`xrf_raw`/`xrd_metadata`, register new AIMD‑L run keys on
-  the dynamic dimension, and emit one deduped RunRequest per `(data_type, run)`.
-  The dedup key composes both the raw and metadata content hashes; either
-  changing re-triggers. *Tests: `test_sensors_maxima_discovery.py`.*
+  index for `xrd_raw`/`xrf_raw`/`xrd_derived` plus `xrd_metadata`, register new
+  AIMD‑L run keys on the dynamic dimension, and emit **one deduped RunRequest
+  per run** — not per `(data_type, run)`. The dedup key composes a content hash
+  per data type plus the `xrd_metadata` hash, so any of them changing
+  re-triggers; a changed `instructions.txt` moves every coordinate in the run,
+  which is why it is in the key. *Tests: `test_sensors_maxima_discovery.py`.*
 - **SPEC‑DISC‑02 — Gap-filling reconciliation.** A weekly schedule shall
   enumerate registered partitions and emit a (dry-run) RunRequest only for those
   lacking a successful materialization. *Tests:
@@ -381,7 +415,6 @@ materialization metadata from the event log (see SPEC‑ORCH‑03).
 | `coord_transform_check` | `pdv_data` | WARN | any transform failure |
 | `manifest_written` | `pdv_processing_manifest` | ERROR | manifest not written |
 | `enrichment_success_rate_*` / `no_coord_transform_failures_*` | coord_enrichment leaves | WARN | as above, per leaf |
-| `maxima_xrd_derived_provenance_valid` | `enriched_maxima_derived` | ERROR | any prov-link error |
 | `pdv_coverage_above_threshold` | `helix_pdv_coverage_observer` | WARN | < 50% coverage |
 | `inventory_nonempty_per_instrument` | `enrichable_items_inventory` | WARN | any empty key |
 | `all_helix_alpss_tagged` | `helix_alpss_provenance_tagged` | ERROR | any HELIX unresolved |
@@ -415,8 +448,7 @@ false-positive edge cases are open — see Q10.
 - **SPEC‑ORCH‑04 — Module annotation rule.** Dagster-adjacent modules shall NOT
   use `from __future__ import annotations` (breaks `Config` schema resolution).
   *Tests: `test_annotations_rule.py`.*
-- **SPEC‑ORCH‑05 — Asset grouping.** Every asset shall belong to one of six named
-  groups; none in the implicit `default` group. *Tests: `test_asset_groups.py`.*
+- **SPEC‑ORCH‑05 — Asset grouping.** Every asset shall belong to a named group; none in the implicit `default` group. *Tests: `test_asset_groups.py`.*
 
 --
 
@@ -473,12 +505,16 @@ Payload written to an enriched item (`addMetadataToItem`):
 
 ## 8. Acceptance (end-to-end, from the test suite)
 
-- **AC‑1 (MAXIMA raw):** 25 `xrd_raw` + 25 `xrf_raw` → 50 enrichment writes + 1
-  manifest write; report sees 2 materialized raw partitions.
+- **AC‑1 (MAXIMA run):** 25 `xrd_raw` + 25 `xrf_raw` in **one** run partition →
+  50 enrichment writes + 1 manifest write; report sees 1 materialized partition.
   *(`test_coord_enrichment_e2e.py`.)*
-- **AC‑2 (inheritance):** 2 ALPSS + 1 `xrd_derived` → 3 writes + 1 manifest;
-  ALPSS Sample = parent Station via inherited version; coverage 1/1.
+- **AC‑2 (HELIX inheritance):** 2 ALPSS items → 2 writes + 1 manifest; ALPSS
+  Sample = parent Station via inherited version; coverage 1/1.
   *(`test_coord_enrichment_phase4_e2e.py`.)*
+- **AC‑4 (MAXIMA live dry run, 2026‑08‑31):** three real runs, 510 items each
+  (`xrd_raw` 170, `xrd_derived` 170, `xrf_raw` 85, `xrd_visualization` 85) →
+  100% success, 0 resolution errors, 0 coordinate failures, 0 writes under
+  `dry_run`. Before the refactor `xrd_derived` was 0-in-scope.
 - **AC‑3 (HELIX boundary):** two rows, same station, timestamps straddling
   2026‑04‑01 → v1 yields the flip, v2 yields identity.
   *(`test_pdv_data_version_boundary_dispatch`.)*
@@ -507,15 +543,18 @@ inherit-from-parent (current) **vs** match ALPSS files directly against the same
 spreadsheet shot table. See Q2 — note the direct-matching alternative is
 weakened by the C-named convention, whose filenames carry no IGSN.
 
-### Tier 2 — MAXIMA leaf (second instrument)
-Adds: **C5, C7 (discovery).** This is the part the "one spreadsheet table"
+### Tier 2 — MAXIMA (second instrument)
+Adds: **C5, C7 (discovery).** Now one tier, not two: since every MAXIMA file
+reads the same `instructions.txt`, raw and derived enrich in a single run-scoped
+leaf. The former Tier 3 "MAXIMA derived" collapsed into this one. This is the part the "one spreadsheet table"
 mental model cannot express — MAXIMA has *no spreadsheet*; coordinates come from
 `instructions.txt`. This is genuinely new capability, not duplication.
 Decision point: dynamic partitions + discovery sensor (current) **vs** a periodic
 idempotent sweep. See Q3.
 
-### Tier 3 — MAXIMA derived + full reporting
-Adds: **C6, C8.** ~32.9k more derived items + state reporting/manifests.
+### Tier 3 — Full reporting
+Adds: **C8.** State reporting + manifests. (The former "MAXIMA derived" content
+of this tier merged into Tier 2.)
 
 > **Reading the tiers against the simplification debate:** the engineer's 3-step
 > proposal is an accurate description of **Tier 0** (and an arguable Tier 1). It
@@ -538,11 +577,12 @@ Adds: **C6, C8.** ~32.9k more derived items + state reporting/manifests.
   HELIX — but it is now the weaker option: C-named filenames carry no IGSN, so
   ~71% of ALPSS items could not be matched to a shot table by filename alone.
   Inheritance works uniformly across both conventions.
-- **Q3 — MAXIMA partitioning.** Is `MultiPartitionsDefinition` + dynamic dim +
-  discovery sensor + dual content-hash dedup warranted for ~26k items, or would a
-  periodic sweep relying on SPEC‑PROV‑02 idempotency be simpler to operate?
-  Dynamic partitions must be pre-registered and orphans accumulate.
-- **Q4 — Duplicate jobs.** `coord_enrichment_maxima_raw_job` and
+- **Q3 — MAXIMA partitioning.** ~~Is `MultiPartitionsDefinition` warranted?~~
+  **Partly closed** 2026-08-31: the `data_type` dimension is gone; partitions are
+  now one-per-run on a single dynamic dim. Still open: whether dynamic partitions
+  plus a discovery sensor beat a periodic sweep relying on SPEC‑PROV‑02
+  idempotency. Dynamic partitions must be pre-registered and orphans accumulate.
+- **Q4 — Duplicate jobs.** `coord_enrichment_maxima_job` and
   `..._partition_job` select identical assets, split only for UI filterability.
   Could be one job + tags.
 - **Q5 — Threshold config.** Rate thresholds (0.8/0.5/0.9) and rounding (4dp/1dp)
@@ -593,6 +633,17 @@ Adds: **C6, C8.** ~32.9k more derived items + state reporting/manifests.
   are **not wired into the leaf** (which self-fetches per partition). They are
   exercised only by their own unit tests — leftovers from the pre‑issue‑#23
   folder-walk design. Dead-relative-to-the-DAG; flag, don't delete blindly.
+- **D5** — `instruments/maxima.heal_maxima_derived_parent` and
+  `find_master_h5_item_id` are now **unreachable from the DAG**: with
+  `MAXIMA_DERIVED_DATA_TYPES` empty, `resolve_parent_item_id`'s MAXIMA branch can
+  never fire. They remain exercised by their own unit tests. Same status as D3 —
+  flag, don't delete blindly.
+- **D6** — `docs/runbooks/` (`readiness_dry_run.md`,
+  `coord_enrichment_production_sweep.md`, `first_sweep_expected_values.md`) and
+  `operations/dry_run_readiness.py` still reference `enriched_maxima_raw`,
+  `enriched_maxima_derived`, `coord_enrichment_maxima_derived_job` and the
+  `(data_type, run)` partition shape. The GO/NO-GO rubric will not run against
+  the current DAG until they are updated.
 - **D4** — `.claude/helix_dagster_context.md` describes an old `helix_dagster/`
   module at version 0.2.0/0.4.0; the live package is `aimdl_coord_enrichment` at
   0.6.0. It also documents the pre-issue-#31 9-asset HELIX DAG throughout.

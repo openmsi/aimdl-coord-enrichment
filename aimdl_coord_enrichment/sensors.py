@@ -1,6 +1,5 @@
 from dagster import (
     DefaultSensorStatus,
-    MultiPartitionKey,
     RunRequest,
     SensorEvaluationContext,
     SensorResult,
@@ -17,84 +16,78 @@ from aimdl_coord_enrichment.partitions import (
 from aimdl_coord_enrichment.resources import GirderConnection
 
 
-_MAXIMA_RAW_DATA_TYPES = ("xrd_raw", "xrf_raw")
+# Data types whose arrival signals that a run has produced something
+# worth enriching. The run — not the data type — is the unit of work.
+_MAXIMA_DISCOVERY_DATA_TYPES = ("xrd_raw", "xrf_raw", "xrd_derived")
 
 
 @sensor(
-    job_name="coord_enrichment_maxima_raw_partition_job",
+    job_name="coord_enrichment_maxima_partition_job",
     minimum_interval_seconds=3600,
     default_status=DefaultSensorStatus.STOPPED,
 )
-def maxima_raw_discovery_sensor(
+def maxima_run_discovery_sensor(
     context: SensorEvaluationContext,
     girder: GirderConnection,
 ) -> SensorResult:
-    """Discover new AIMD-L partitions for MAXIMA raw and emit materialization requests.
+    """Discover new AIMD-L runs for MAXIMA and request their materialization.
 
     Per tick:
-      1. Fetches the partition index for xrd_raw, xrf_raw, and
+      1. Fetches the partition index for each discovery data type and for
          xrd_metadata.
-      2. Adds the union of AIMD-L run keys (``igsn//experiment_date``)
-         to the dynamic ``maxima_raw_run`` partition dimension.
-      3. Emits one RunRequest per observed (data_type, aimdl_key),
-         dedupping on a run_key that composes both the raw content
-         hash and the xrd_metadata content hash.
+      2. Adds the union of AIMD-L run keys ("igsn//experiment_date") to the
+         dynamic ``maxima_run`` partition dimension.
+      3. Emits one RunRequest per run key, deduped on a run_key composing the
+         content hash of every data type present plus the xrd_metadata hash.
 
-    Dedup semantics (sensor-scoped): the same (data_type, aimdl_key,
-    raw_hash, metadata_hash) tuple produces the same run_key, so
-    unchanged partitions are suppressed across all sensor
-    evaluations. Either hash changing triggers a new run.
+    Dedup semantics (sensor-scoped): the same (aimdl_key, per-type hashes,
+    metadata hash) tuple produces the same run_key, so unchanged runs are
+    suppressed across evaluations. Any hash changing re-triggers the run —
+    including xrd_metadata, since a changed instructions.txt changes the
+    coordinates of every file in the run.
 
-    The xrd_metadata hash fallback is "no-xrd-metadata" for runs
-    that have no xrd_metadata entry — those partitions will still
-    materialize once, and the asset will record a resolution error
-    for the missing instructions.txt.
+    The xrd_metadata fallback is "no-xrd-metadata" for runs with no
+    instructions.txt; those still materialize once, and the asset records a
+    resolution error per item.
     """
-    raw_indexes: dict[str, dict[str, str]] = {
+    indexes: dict[str, dict[str, str]] = {
         dt: fetch_partition_index(girder, dt)
-        for dt in _MAXIMA_RAW_DATA_TYPES
+        for dt in _MAXIMA_DISCOVERY_DATA_TYPES
     }
     metadata_index = fetch_partition_index(girder, "xrd_metadata")
 
     all_aimdl_keys = sorted(
-        {
-            aimdl_key
-            for index in raw_indexes.values()
-            for aimdl_key in index.keys()
-        }
+        {key for index in indexes.values() for key in index.keys()}
     )
 
     run_requests: list[RunRequest] = []
-    for data_type, index in raw_indexes.items():
-        for aimdl_key, raw_hash in index.items():
-            metadata_hash = metadata_index.get(aimdl_key, "no-xrd-metadata")
+    for aimdl_key in all_aimdl_keys:
+        metadata_hash = metadata_index.get(aimdl_key, "no-xrd-metadata")
+        per_type = {
+            dt: indexes[dt].get(aimdl_key, "absent")
+            for dt in _MAXIMA_DISCOVERY_DATA_TYPES
+        }
+        hash_part = "|".join(
+            f"{dt}={per_type[dt]}" for dt in _MAXIMA_DISCOVERY_DATA_TYPES
+        )
+        dagster_run_key = (
+            f"coord-enrichment|{aimdl_key}|{hash_part}"
+            f"|xrd_metadata={metadata_hash}"
+        )
 
-            dagster_partition_key = MultiPartitionKey(
-                {"data_type": data_type, "run": aimdl_key}
+        run_requests.append(
+            RunRequest(
+                run_key=dagster_run_key,
+                partition_key=aimdl_key,
+                tags={
+                    "aimdl_partition_key": aimdl_key,
+                    "xrd_metadata_content_hash": metadata_hash,
+                },
             )
-            dagster_run_key = (
-                f"coord-enrichment"
-                f"|{data_type}"
-                f"|{aimdl_key}"
-                f"|raw={raw_hash}"
-                f"|xrd_metadata={metadata_hash}"
-            )
-
-            run_requests.append(
-                RunRequest(
-                    run_key=dagster_run_key,
-                    partition_key=dagster_partition_key,
-                    tags={
-                        "data_type": data_type,
-                        "aimdl_partition_key": aimdl_key,
-                        "raw_content_hash": raw_hash,
-                        "xrd_metadata_content_hash": metadata_hash,
-                    },
-                )
-            )
+        )
 
     context.log.info(
-        "maxima_raw_discovery_sensor: %d AIMD-L run keys, %d run requests",
+        "maxima_run_discovery_sensor: %d AIMD-L run keys, %d run requests",
         len(all_aimdl_keys), len(run_requests),
     )
 

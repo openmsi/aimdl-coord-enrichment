@@ -19,10 +19,7 @@ from dagster import (
 )
 
 from aimdl_coord_enrichment.coord_enrichment.helix_alpss_leaf import HELIX_ALPSS_PARTITIONS
-from aimdl_coord_enrichment.coord_enrichment.inventory import MAXIMA_RAW_PARTITIONS
-from aimdl_coord_enrichment.coord_enrichment.maxima_derived_leaf import (
-    MAXIMA_DERIVED_PARTITIONS,
-)
+from aimdl_coord_enrichment.coord_enrichment.inventory import MAXIMA_RUN_PARTITIONS
 
 
 _COUNT_KEYS = (
@@ -112,9 +109,8 @@ def _read_leaf_partitions(
 @asset(
     group_name="coord_enrichment_reporting",
     deps=[
-        AssetDep("enriched_maxima_raw", partition_mapping=AllPartitionMapping()),
+        AssetDep("enriched_maxima_run", partition_mapping=AllPartitionMapping()),
         AssetDep("enriched_helix_alpss", partition_mapping=AllPartitionMapping()),
-        AssetDep("enriched_maxima_derived", partition_mapping=AllPartitionMapping()),
     ],
 )
 def coord_enrichment_report(
@@ -135,33 +131,27 @@ def coord_enrichment_report(
     """
     instance = context.instance
 
-    maxima_raw_keys = [
-        str(k) for k in MAXIMA_RAW_PARTITIONS.get_partition_keys(
+    maxima_run_keys = [
+        str(k) for k in MAXIMA_RUN_PARTITIONS.get_partition_keys(
             dynamic_partitions_store=instance,
         )
     ]
     helix_alpss_keys = list(HELIX_ALPSS_PARTITIONS.get_partition_keys())
-    maxima_derived_keys = list(MAXIMA_DERIVED_PARTITIONS.get_partition_keys())
 
-    raw_state, raw_unmat = _read_leaf_partitions(
-        instance, "enriched_maxima_raw", maxima_raw_keys,
+    maxima_state, maxima_unmat = _read_leaf_partitions(
+        instance, "enriched_maxima_run", maxima_run_keys,
     )
     alpss_state, alpss_unmat = _read_leaf_partitions(
         instance, "enriched_helix_alpss", helix_alpss_keys,
     )
-    derived_state, derived_unmat = _read_leaf_partitions(
-        instance, "enriched_maxima_derived", maxima_derived_keys,
-    )
 
     leaves_by_partition: dict[str, dict[str, Any]] = {}
-    leaves_by_partition.update(raw_state)
+    leaves_by_partition.update(maxima_state)
     leaves_by_partition.update(alpss_state)
-    leaves_by_partition.update(derived_state)
 
     leaves_unmaterialized = {
-        "enriched_maxima_raw": raw_unmat,
+        "enriched_maxima_run": maxima_unmat,
         "enriched_helix_alpss": alpss_unmat,
-        "enriched_maxima_derived": derived_unmat,
     }
 
     agg = {k: 0 for k in _COUNT_KEYS}

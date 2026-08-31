@@ -1,22 +1,22 @@
-"""Tests for maxima_raw_discovery_sensor — dedup key construction,
+"""Tests for maxima_run_discovery_sensor — dedup key construction,
 dynamic partition add requests, metadata-hash fallback."""
 
 from unittest.mock import MagicMock
 
 from dagster import (
     DagsterInstance,
-    MultiPartitionKey,
     SensorResult,
     build_sensor_context,
 )
 
-from aimdl_coord_enrichment.sensors import maxima_raw_discovery_sensor
+from aimdl_coord_enrichment.sensors import maxima_run_discovery_sensor
 
 
-def _make_indexes(xrd_raw=None, xrf_raw=None, xrd_metadata=None):
+def _make_indexes(xrd_raw=None, xrf_raw=None, xrd_derived=None, xrd_metadata=None):
     return {
         "xrd_raw": xrd_raw or {},
         "xrf_raw": xrf_raw or {},
+        "xrd_derived": xrd_derived or {},
         "xrd_metadata": xrd_metadata or {},
     }
 
@@ -40,7 +40,7 @@ def _run_sensor(girder):
         instance=DagsterInstance.ephemeral(),
         resources={"girder": girder},
     )
-    return maxima_raw_discovery_sensor(ctx)
+    return maxima_run_discovery_sensor(ctx)
 
 
 def test_sensor_empty_indexes_emits_no_requests():
@@ -52,7 +52,9 @@ def test_sensor_empty_indexes_emits_no_requests():
     assert result.dynamic_partitions_requests[0].partition_keys == []
 
 
-def test_sensor_emits_run_request_per_data_type_per_key():
+def test_sensor_emits_one_run_request_per_run_key():
+    """One request per run, not per (data_type, run) — the run is the unit of
+    work, so a run appearing under several data types is still one request."""
     indexes = _make_indexes(
         xrd_raw={"K1//T1": "rawhashA", "K2//T2": "rawhashB"},
         xrf_raw={"K1//T1": "rawhashC"},  # same aimdl_key as xrd_raw K1
@@ -61,15 +63,19 @@ def test_sensor_emits_run_request_per_data_type_per_key():
     girder = _mock_girder_with(indexes)
     result = _run_sensor(girder)
 
-    # 3 RunRequests: xrd_raw×2 + xrf_raw×1
-    assert len(result.run_requests) == 3
+    assert len(result.run_requests) == 2
+    assert sorted(rr.partition_key for rr in result.run_requests) == [
+        "K1//T1", "K2//T2"
+    ]
 
-    # Partition add request has the union (2 unique keys) — not 3
     adds = result.dynamic_partitions_requests[0].partition_keys
     assert sorted(adds) == ["K1//T1", "K2//T2"]
 
 
-def test_sensor_dedup_key_includes_both_hashes():
+def test_sensor_dedup_key_composes_every_hash():
+    """The dedup key carries a hash per discovery data type plus the
+    xrd_metadata hash, so a change to any of them re-triggers the run —
+    including instructions.txt, which moves every coordinate in the run."""
     indexes = _make_indexes(
         xrd_raw={"K1//T1": "rawA"},
         xrd_metadata={"K1//T1": "metaA"},
@@ -78,8 +84,19 @@ def test_sensor_dedup_key_includes_both_hashes():
     result = _run_sensor(girder)
     rr = result.run_requests[0]
     assert rr.run_key == (
-        "coord-enrichment|xrd_raw|K1//T1|raw=rawA|xrd_metadata=metaA"
+        "coord-enrichment|K1//T1"
+        "|xrd_raw=rawA|xrf_raw=absent|xrd_derived=absent"
+        "|xrd_metadata=metaA"
     )
+
+
+def test_sensor_rerequests_when_only_instructions_change():
+    base = dict(xrd_raw={"K1//T1": "rawA"})
+    first = _run_sensor(_mock_girder_with(
+        _make_indexes(**base, xrd_metadata={"K1//T1": "metaA"})))
+    second = _run_sensor(_mock_girder_with(
+        _make_indexes(**base, xrd_metadata={"K1//T1": "metaB"})))
+    assert first.run_requests[0].run_key != second.run_requests[0].run_key
 
 
 def test_sensor_metadata_hash_fallback():
@@ -93,16 +110,11 @@ def test_sensor_metadata_hash_fallback():
     assert "xrd_metadata=no-xrd-metadata" in rr.run_key
 
 
-def test_sensor_partition_key_is_multi_dim():
+def test_sensor_partition_key_is_the_bare_run_key():
     indexes = _make_indexes(
         xrd_raw={"K1//T1": "rawA"},
         xrd_metadata={"K1//T1": "metaA"},
     )
     girder = _mock_girder_with(indexes)
     result = _run_sensor(girder)
-    rr = result.run_requests[0]
-    pk = rr.partition_key
-    if isinstance(pk, MultiPartitionKey):
-        assert pk.keys_by_dimension == {"data_type": "xrd_raw", "run": "K1//T1"}
-    else:
-        assert "xrd_raw" in str(pk) and "K1//T1" in str(pk)
+    assert result.run_requests[0].partition_key == "K1//T1"

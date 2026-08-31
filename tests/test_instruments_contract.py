@@ -103,17 +103,24 @@ def test_resolve_parent_item_id_helix_requires_inventory_kwarg():
 
 # -- resolve_parent_item_id: MAXIMA ------------------------------------------
 
-def test_resolve_parent_item_id_dispatch_maxima_derived():
-    item = _xrd_derived_item()
-    girder = _maxima_girder_mock()
-    result = resolve_parent_item_id(item, girder=girder)
-    assert result == "master3"
+def test_resolve_parent_item_id_returns_none_for_xrd_derived():
+    """xrd_derived is a leaf now: it reads the run's instructions.txt directly
+    rather than inheriting from its parent master.h5, so the registry has no
+    parent to resolve. The scientific parent link still lives in
+    meta.prov.wasDerivedFrom and is recorded in coord_provenance as a
+    cross-reference — it is just not the coordinate's source."""
+    assert resolve_parent_item_id(_xrd_derived_item(), girder=MagicMock()) is None
 
 
-def test_resolve_parent_item_id_maxima_requires_girder_kwarg():
-    item = _xrd_derived_item()
-    with pytest.raises(TypeError, match="girder"):
-        resolve_parent_item_id(item)
+def test_no_maxima_data_type_is_derived():
+    from aimdl_coord_enrichment.instruments import (
+        MAXIMA_DERIVED_DATA_TYPES,
+        MAXIMA_LEAF_DATA_TYPES,
+    )
+    assert MAXIMA_DERIVED_DATA_TYPES == frozenset()
+    assert MAXIMA_LEAF_DATA_TYPES == frozenset(
+        {"xrd_raw", "xrf_raw", "xrd_derived", "xrd_visualization"}
+    )
 
 
 # -- resolve_parent_item_id: edge cases -------------------------------------
@@ -142,12 +149,6 @@ def test_resolve_leaf_dispatch_maxima_xrd_raw():
     assert result.station_y == 0.0
     assert result.station_coord_source["kind"] == "maxima_instructions"
     assert result.station_coord_source["scan_point_index"] == 17
-
-
-def test_resolve_leaf_raises_for_derived():
-    item = _xrd_derived_item()
-    with pytest.raises(TypeError, match="non-leaf"):
-        resolve_leaf(item, girder=MagicMock())
 
 
 def test_resolve_leaf_raises_for_helix_alpss():

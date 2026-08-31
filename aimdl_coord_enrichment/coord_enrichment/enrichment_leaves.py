@@ -1,11 +1,11 @@
 """Coordinate enrichment leaves.
 
-``enriched_maxima_raw`` is partitioned on
-``MultiPartitionsDefinition({data_type, run})`` where ``run`` is a
-dynamic dimension keyed on the AIMD-L partition string
-``"<igsn>//<experiment_date>"``. Each partition fetches its own
-items and the matching ``instructions.txt`` via the
-``/aimdl/partition/details`` endpoint.
+``enriched_maxima_run`` is partitioned on a single dynamic dimension
+keyed on the AIMD-L partition string ``"<igsn>//<experiment_date>"``.
+One partition == one run == one ``instructions.txt``, which supplies
+the station coordinates for every file the run produced: raw
+measurements and derived products alike, each mapped by the
+``scan_point_<i>`` index in its own filename.
 """
 
 import io
@@ -26,11 +26,22 @@ from aimdl_coord_enrichment.coord_enrichment.check_support import (
     no_materialization_result,
 )
 from aimdl_coord_enrichment.coord_enrichment.config import CoordEnrichmentConfig
-from aimdl_coord_enrichment.coord_enrichment.inventory import MAXIMA_RAW_PARTITIONS
+from aimdl_coord_enrichment.coord_enrichment.exclusions import (
+    MALFORMED_INSTRUCTIONS,
+    NO_EXPERIMENT_DATE,
+    NO_INSTRUCTIONS,
+    SCAN_POINT_OUT_OF_RANGE,
+    UNPARSEABLE_NAME,
+    ExclusionLog,
+)
+from aimdl_coord_enrichment.coord_enrichment.inventory import MAXIMA_RUN_PARTITIONS
 from aimdl_coord_enrichment.coord_enrichment.overwrite import should_write
 from aimdl_coord_enrichment.coordinates import transform_station_to_sample
 from aimdl_coord_enrichment.girder_io import fetch_partition_details
-from aimdl_coord_enrichment.instruments import INSTRUMENT_MAXIMA
+from aimdl_coord_enrichment.instruments import (
+    INSTRUMENT_MAXIMA,
+    MAXIMA_LEAF_DATA_TYPES,
+)
 from aimdl_coord_enrichment.instruments.maxima import (
     _experiment_date,
     parse_instructions_json,
@@ -137,32 +148,24 @@ def _fetch_instructions_for_run(
 
 
 @asset(
-    group_name="maxima_raw",
-    partitions_def=MAXIMA_RAW_PARTITIONS,
+    group_name="maxima",
+    partitions_def=MAXIMA_RUN_PARTITIONS,
 )
-def enriched_maxima_raw(
+def enriched_maxima_run(
     context: AssetExecutionContext,
     config: CoordEnrichmentConfig,
     coord_transform_config_snapshot,
     girder: GirderConnection,
 ) -> dict[str, Any]:
-    """Write Sample_X/Y and coord_provenance to MAXIMA xrd_raw or xrf_raw items.
+    """Write Station/Sample coordinates + coord_provenance to every in-scope
+    MAXIMA item produced by one run.
 
-    Partitioned on ``MultiPartitionsDefinition({data_type, run})``.
-    Each partition fetches its own items and the matching
-    ``instructions.txt`` via the ``/aimdl/partition/details``
-    endpoint, keyed on ``aimdl_key = "<igsn>//<experiment_date>"``.
+    The partition key is the AIMD-L run key ``"<igsn>//<experiment_date>"``.
+    The run's ``instructions.txt`` is fetched once and supplies coordinates
+    for all of its files; each file selects its scan point by the
+    ``scan_point_<i>`` index in its own name.
     """
-    keys = context.partition_key.keys_by_dimension
-    data_type = keys["data_type"]
-    aimdl_key = keys["run"]
-    partition_key_str = str(context.partition_key)
-
-    items = fetch_partition_details(girder, data_type, aimdl_key)
-    context.log.info(
-        "enriched_maxima_raw (%s, %s): %d items to consider",
-        data_type, aimdl_key, len(items),
-    )
+    aimdl_key = str(context.partition_key)
 
     instr_item, parsed, instructions_errors = _fetch_instructions_for_run(
         girder, aimdl_key, context,
@@ -174,7 +177,7 @@ def enriched_maxima_raw(
         run_id = None
 
     counts = {
-        "seen": len(items),
+        "seen": 0,
         "written": 0,
         "simulated_dry_run": 0,
         "skipped_no_change": 0,
@@ -183,111 +186,128 @@ def enriched_maxima_raw(
     }
     write_errors: list[dict[str, Any]] = []
     resolution_errors: list[dict[str, Any]] = []
+    excluded = ExclusionLog()
     version_counter: dict[str, int] = {}
+    per_data_type: dict[str, int] = {}
 
-    instructions_missing_error = (
-        instructions_errors[0]["error"] if instr_item is None or parsed is None
-        else None
-    )
+    # No usable instructions.txt for this run: nothing in it can be enriched.
+    # That is a property of the run as produced, not a failure — see
+    # coord_enrichment/exclusions.py.
+    if instr_item is None or parsed is None:
+        run_exclusion_reason = (
+            MALFORMED_INSTRUCTIONS if instr_item is not None else NO_INSTRUCTIONS
+        )
+    else:
+        run_exclusion_reason = None
 
-    for item in items:
-        item_id = item.get("_id")
-        name = item.get("name", "")
+    for data_type in sorted(MAXIMA_LEAF_DATA_TYPES):
+        items = fetch_partition_details(girder, data_type, aimdl_key)
+        per_data_type[data_type] = len(items)
+        counts["seen"] += len(items)
 
-        if instructions_missing_error is not None:
-            resolution_errors.append(
-                {
-                    "item_id": item_id,
-                    "name": name,
-                    "stage": "instructions",
-                    "error": instructions_missing_error,
-                }
-            )
-            counts["resolution_errors"] += 1
-            continue
+        for item in items:
+            item_id = item.get("_id")
+            name = item.get("name", "")
 
-        try:
+            if run_exclusion_reason is not None:
+                excluded.add(run_exclusion_reason, name, item_id)
+                continue
+
             index = parse_scan_point_index(name)
             if index is None:
-                raise ResolutionError(f"cannot parse scan_point index from {name!r}")
-            station_x, station_y = scan_point_coords(parsed, index)
-        except ResolutionError as exc:
-            resolution_errors.append(
-                {"item_id": item_id, "name": name, "stage": "scan_point_lookup", "error": str(exc)}
+                excluded.add(UNPARSEABLE_NAME, name, item_id)
+                continue
+            try:
+                station_x, station_y = scan_point_coords(parsed, index)
+            except ResolutionError:
+                excluded.add(SCAN_POINT_OUT_OF_RANGE, name, item_id)
+                continue
+
+            try:
+                shot_ts = _experiment_date(item)
+            except ResolutionError:
+                excluded.add(NO_EXPERIMENT_DATE, name, item_id)
+                continue
+
+            sample_x, sample_y, transform_name = transform_station_to_sample(
+                station_x, station_y,
+                instrument=INSTRUMENT_MAXIMA, timestamp=shot_ts,
             )
-            counts["resolution_errors"] += 1
-            continue
+            if sample_x is None or sample_y is None:
+                counts["coord_failures"] += 1
+                continue
+            sample_x = round(sample_x, 4)
+            sample_y = round(sample_y, 4)
+            if transform_name is not None:
+                version_counter[transform_name] = (
+                    version_counter.get(transform_name, 0) + 1
+                )
 
-        try:
-            shot_ts = _experiment_date(item)
-        except ResolutionError as exc:
-            resolution_errors.append(
-                {"item_id": item_id, "name": name, "stage": "experiment_date", "error": str(exc)}
+            station_coord_source = {
+                "kind": "maxima_instructions",
+                "instructions_item_id": instr_item["_id"],
+                "scan_point_index": index,
+            }
+            # Lineage, recorded but not load-bearing: the coordinate's origin
+            # is the instructions.txt above, not the parent. Kept so the
+            # provenance carries the scientific parent link where one exists.
+            parent_id = ((item.get("meta") or {}).get("prov") or {}).get(
+                "wasDerivedFrom"
             )
-            counts["resolution_errors"] += 1
-            continue
+            if parent_id:
+                station_coord_source["parent_item_id"] = parent_id
 
-        sample_x, sample_y, transform_name = transform_station_to_sample(
-            station_x, station_y, instrument=INSTRUMENT_MAXIMA, timestamp=shot_ts,
-        )
-        if sample_x is None or sample_y is None:
-            counts["coord_failures"] += 1
-            continue
-        sample_x = round(sample_x, 4)
-        sample_y = round(sample_y, 4)
-        if transform_name is not None:
-            version_counter[transform_name] = version_counter.get(transform_name, 0) + 1
-
-        station_coord_source = {
-            "kind": "maxima_instructions",
-            "instructions_item_id": instr_item["_id"],
-            "scan_point_index": index,
-        }
-
-        new_prov = build_coord_provenance(
-            instrument=INSTRUMENT_MAXIMA,
-            transform_version=transform_name,
-            transform_yaml_sha256=coord_transform_config_snapshot.yaml_sha256 or "",
-            transformer_version=coord_transform_config_snapshot.transformer_version,
-            pipeline_version=PIPELINE_VERSION,
-            source_timestamp=shot_ts,
-            source_timestamp_origin="meta.experiment_date",
-            station_coord_source=station_coord_source,
-            dagster_run_id=run_id,
-        )
-
-        stored_prov = (item.get("meta") or {}).get("coord_provenance")
-        write, reason = should_write(new_prov, stored_prov)
-
-        if not write:
-            counts["skipped_no_change"] += 1
-            continue
-
-        payload = {
-            "Station_X": float(station_x),
-            "Station_Y": float(station_y),
-            "Sample_X": sample_x,
-            "Sample_Y": sample_y,
-            "coord_provenance": new_prov,
-        }
-
-        if config.dry_run:
-            counts["simulated_dry_run"] += 1
-            continue
-
-        try:
-            girder.addMetadataToItem(item_id, payload)
-            counts["written"] += 1
-        except Exception as exc:
-            context.log.error(
-                "enriched_maxima_raw write failed for %s: %s", item_id, exc
+            new_prov = build_coord_provenance(
+                instrument=INSTRUMENT_MAXIMA,
+                transform_version=transform_name,
+                transform_yaml_sha256=coord_transform_config_snapshot.yaml_sha256 or "",
+                transformer_version=coord_transform_config_snapshot.transformer_version,
+                pipeline_version=PIPELINE_VERSION,
+                source_timestamp=shot_ts,
+                source_timestamp_origin="meta.experiment_date",
+                station_coord_source=station_coord_source,
+                dagster_run_id=run_id,
             )
-            write_errors.append({"item_id": item_id, "error": str(exc)})
+
+            stored_prov = (item.get("meta") or {}).get("coord_provenance")
+            write, reason = should_write(new_prov, stored_prov)
+
+            if not write:
+                counts["skipped_no_change"] += 1
+                continue
+
+            payload = {
+                "Station_X": float(station_x),
+                "Station_Y": float(station_y),
+                "Sample_X": sample_x,
+                "Sample_Y": sample_y,
+                "coord_provenance": new_prov,
+            }
+
+            if config.dry_run:
+                counts["simulated_dry_run"] += 1
+                continue
+
+            try:
+                girder.addMetadataToItem(item_id, payload)
+                counts["written"] += 1
+            except Exception as exc:
+                context.log.error(
+                    "enriched_maxima_run write failed for %s: %s", item_id, exc
+                )
+                write_errors.append({"item_id": item_id, "error": str(exc)})
+
+    context.log.info(
+        "enriched_maxima_run %s: %d items across %s | %d in scope, "
+        "%d excluded (%s)",
+        aimdl_key, counts["seen"],
+        ", ".join(f"{k}={v}" for k, v in sorted(per_data_type.items())),
+        counts["seen"] - excluded.total, excluded.total, excluded.summary_text(),
+    )
 
     context.add_output_metadata(
         {
-            "partition": MetadataValue.text(partition_key_str),
-            "data_type": MetadataValue.text(data_type),
+            "partition": MetadataValue.text(aimdl_key),
             "aimdl_key": MetadataValue.text(aimdl_key),
             "seen": MetadataValue.int(counts["seen"]),
             "written": MetadataValue.int(counts["written"]),
@@ -297,6 +317,14 @@ def enriched_maxima_raw(
             "resolution_errors": MetadataValue.int(counts["resolution_errors"]),
             "write_errors": MetadataValue.int(len(write_errors)),
             "instructions_errors": MetadataValue.int(len(instructions_errors)),
+            "in_scope": MetadataValue.int(counts["seen"] - excluded.total),
+            "excluded": MetadataValue.int(excluded.total),
+            "excluded_by_reason": MetadataValue.text(excluded.summary_text()),
+            "excluded_examples": MetadataValue.text(excluded.examples_text()),
+            "items_by_data_type": MetadataValue.text(
+                ", ".join(f"{k}={v}" for k, v in sorted(per_data_type.items()))
+                or "none"
+            ),
             "transform_versions_used": MetadataValue.text(
                 ", ".join(f"{k}={v}" for k, v in sorted(version_counter.items()))
                 or "none"
@@ -305,29 +333,28 @@ def enriched_maxima_raw(
     )
 
     return {
-        "partition_key": partition_key_str,
-        "data_type": data_type,
+        "partition_key": aimdl_key,
         "aimdl_key": aimdl_key,
         "counts": counts,
+        "per_data_type": per_data_type,
         "write_errors": write_errors,
         "resolution_errors": resolution_errors,
+        "excluded": excluded.as_dict(),
         "instructions_errors": instructions_errors,
         "version_counter": version_counter,
         "dry_run": config.dry_run,
     }
 
 
-@asset_check(asset="enriched_maxima_raw")
-def enrichment_success_rate_maxima_raw(context):
-    """WARN if <90% of items in this partition ended in a successful decision.
+@asset_check(asset="enriched_maxima_run")
+def enrichment_success_rate_maxima(context):
+    """WARN if <90% of the run's items ended in a successful decision.
 
-    Reads the partition's materialization metadata from the event log
-    rather than taking ``enriched_maxima_raw`` as an input, so the
-    check does not force an IOManager load across the partition
-    cross-product (see check_support module docstring).
+    Reads the partition's materialization metadata from the event log rather
+    than taking the asset as an input (see check_support module docstring).
     """
     md = latest_partition_metadata(
-        context.instance, "enriched_maxima_raw", str(context.partition_key)
+        context.instance, "enriched_maxima_run", str(context.partition_key)
     )
     if md is None:
         return no_materialization_result()
@@ -339,14 +366,15 @@ def enrichment_success_rate_maxima_raw(context):
         resolution_errors=int(md.get("resolution_errors", 0)),
         write_errors_count=int(md.get("write_errors", 0)),
         partition_label=str(md.get("partition", context.partition_key)),
+        excluded=int(md.get("excluded", 0)),
     )
 
 
-@asset_check(asset="enriched_maxima_raw")
-def no_coord_transform_failures_maxima_raw(context):
+@asset_check(asset="enriched_maxima_run")
+def no_coord_transform_failures_maxima(context):
     """WARN if any coordinate transform returned (None, None, None)."""
     md = latest_partition_metadata(
-        context.instance, "enriched_maxima_raw", str(context.partition_key)
+        context.instance, "enriched_maxima_run", str(context.partition_key)
     )
     if md is None:
         return no_materialization_result()

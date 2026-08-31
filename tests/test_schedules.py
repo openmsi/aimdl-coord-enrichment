@@ -12,8 +12,7 @@ from dagster import (
 from aimdl_coord_enrichment import defs
 from aimdl_coord_enrichment.schedules import (
     coord_enrichment_helix_alpss_weekly_schedule,
-    coord_enrichment_maxima_derived_weekly_schedule,
-    coord_enrichment_maxima_raw_weekly_schedule,
+    coord_enrichment_maxima_weekly_schedule,
     coord_enrichment_state_report_schedule,
 )
 
@@ -25,9 +24,8 @@ def _schedule_names() -> set[str]:
 def test_all_four_schedules_registered():
     names = _schedule_names()
     assert "coord_enrichment_state_report_schedule" in names
-    assert "coord_enrichment_maxima_raw_weekly_schedule" in names
+    assert "coord_enrichment_maxima_weekly_schedule" in names
     assert "coord_enrichment_helix_alpss_weekly_schedule" in names
-    assert "coord_enrichment_maxima_derived_weekly_schedule" in names
 
 
 def test_state_report_schedule_cron():
@@ -38,9 +36,8 @@ def test_state_report_schedule_cron():
 
 def test_weekly_sweep_cron_expressions():
     for sched, expected_cron in [
-        (coord_enrichment_maxima_raw_weekly_schedule, "0 4 * * 0"),
+        (coord_enrichment_maxima_weekly_schedule, "0 4 * * 0"),
         (coord_enrichment_helix_alpss_weekly_schedule, "30 4 * * 0"),
-        (coord_enrichment_maxima_derived_weekly_schedule, "30 4 * * 0"),
     ]:
         assert sched.cron_schedule == expected_cron
         assert sched.execution_timezone == "America/New_York"
@@ -49,10 +46,9 @@ def test_weekly_sweep_cron_expressions():
 def test_all_schedules_default_stopped():
     for sched in [
         coord_enrichment_state_report_schedule,
-        coord_enrichment_maxima_raw_weekly_schedule,
+        coord_enrichment_maxima_weekly_schedule,
         coord_enrichment_helix_alpss_weekly_schedule,
-        coord_enrichment_maxima_derived_weekly_schedule,
-    ]:
+        ]:
         assert sched.default_status == DefaultScheduleStatus.STOPPED
 
 
@@ -64,12 +60,12 @@ def test_state_report_runconfig_is_dry_run():
 
 
 def test_maxima_raw_emits_no_requests_when_no_dynamic_keys(tmp_path):
-    # MAXIMA_RAW_PARTITIONS is now a MultiPartitionsDefinition whose
+    # MAXIMA_RUN_PARTITIONS is now a MultiPartitionsDefinition whose
     # `run` dimension is dynamic. A fresh instance has no registered
     # run keys, so the cartesian product is empty.
     with DagsterInstance.local_temp(tempdir=str(tmp_path)) as instance:
         context = build_schedule_context(instance=instance)
-        requests = list(coord_enrichment_maxima_raw_weekly_schedule(context))
+        requests = list(coord_enrichment_maxima_weekly_schedule(context))
     assert len(requests) == 0
 
 
@@ -77,13 +73,6 @@ def test_helix_alpss_emits_three_run_requests():
     context = build_schedule_context()
     requests = list(coord_enrichment_helix_alpss_weekly_schedule(context))
     assert len(requests) == 3
-
-
-def test_maxima_derived_emits_one_run_request():
-    context = build_schedule_context()
-    requests = list(coord_enrichment_maxima_derived_weekly_schedule(context))
-    assert len(requests) == 1
-
 
 def test_sweep_run_requests_include_partition_key():
     context = build_schedule_context()
@@ -93,7 +82,6 @@ def test_sweep_run_requests_include_partition_key():
             coord_enrichment_helix_alpss_weekly_schedule,
             {"HELIX/pdv_alpss_output", "HELIX/pdv_alpss_result", "HELIX/pdv_alpss_results"},
         ),
-        (coord_enrichment_maxima_derived_weekly_schedule, {"MAXIMA/xrd_derived"}),
     ]:
         requests = list(sched(context))
         actual_keys = {r.partition_key for r in requests}
@@ -103,14 +91,13 @@ def test_sweep_run_requests_include_partition_key():
 def test_sweep_run_requests_tag_dry_run_true(tmp_path):
     with DagsterInstance.local_temp(tempdir=str(tmp_path)) as instance:
         raw_context = build_schedule_context(instance=instance)
-        for req in coord_enrichment_maxima_raw_weekly_schedule(raw_context):
+        for req in coord_enrichment_maxima_weekly_schedule(raw_context):
             assert req.tags["dry_run"] == "true"
 
     context = build_schedule_context()
     for sched in [
         coord_enrichment_helix_alpss_weekly_schedule,
-        coord_enrichment_maxima_derived_weekly_schedule,
-    ]:
+        ]:
         for req in sched(context):
             assert req.tags["dry_run"] == "true", f"{sched.name} partition {req.partition_key}"
 
@@ -119,18 +106,18 @@ def test_maxima_raw_reconciliation_empty_instance(tmp_path):
     """Zero known partitions → zero RunRequests."""
     with DagsterInstance.local_temp(tempdir=str(tmp_path)) as instance:
         ctx = build_schedule_context(instance=instance)
-        result = list(coord_enrichment_maxima_raw_weekly_schedule(ctx))
+        result = list(coord_enrichment_maxima_weekly_schedule(ctx))
     assert result == []
 
 
 def test_maxima_raw_reconciliation_all_gaps(tmp_path):
     """Registered partitions, none materialized → RunRequest per partition."""
     with DagsterInstance.local_temp(tempdir=str(tmp_path)) as instance:
-        instance.add_dynamic_partitions("maxima_raw_run", ["K1//T1", "K2//T2"])
+        instance.add_dynamic_partitions("maxima_run", ["K1//T1", "K2//T2"])
         ctx = build_schedule_context(instance=instance)
-        result = list(coord_enrichment_maxima_raw_weekly_schedule(ctx))
-    # 2 run keys × 2 data_types = 4 partitions, all gaps
-    assert len(result) == 4
+        result = list(coord_enrichment_maxima_weekly_schedule(ctx))
+    # one partition per run key, both gaps
+    assert len(result) == 2
     assert all(rr.tags.get("dry_run") == "true" for rr in result)
     assert all(rr.tags.get("phase5") == "reconciliation" for rr in result)
 
@@ -138,18 +125,15 @@ def test_maxima_raw_reconciliation_all_gaps(tmp_path):
 def test_maxima_raw_reconciliation_partial_gaps(tmp_path):
     """Some materialized, some not → only the gaps."""
     with DagsterInstance.local_temp(tempdir=str(tmp_path)) as instance:
-        instance.add_dynamic_partitions("maxima_raw_run", ["K1//T1"])
-        materialized_key = MultiPartitionKey(
-            {"data_type": "xrd_raw", "run": "K1//T1"}
-        )
+        instance.add_dynamic_partitions("maxima_run", ["K1//T1", "K2//T2"])
         instance.report_runless_asset_event(
             AssetMaterialization(
-                asset_key=AssetKey("enriched_maxima_raw"),
-                partition=str(materialized_key),
+                asset_key=AssetKey("enriched_maxima_run"),
+                partition="K1//T1",
             )
         )
         ctx = build_schedule_context(instance=instance)
-        result = list(coord_enrichment_maxima_raw_weekly_schedule(ctx))
-    # Only the xrf_raw × K1//T1 partition remains a gap
+        result = list(coord_enrichment_maxima_weekly_schedule(ctx))
+    # K1//T1 is materialized; only K2//T2 remains a gap
     assert len(result) == 1
-    assert "xrf_raw" in str(result[0].partition_key)
+    assert result[0].partition_key == "K2//T2"

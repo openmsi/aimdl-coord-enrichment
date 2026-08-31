@@ -48,12 +48,12 @@ def test_report_runs_with_zero_leaf_materializations():
 
     assert report["summary"]["total_writes"] == 0
     assert report["summary"]["leaf_partitions_covered"] == 0
-    assert report["summary"]["leaf_partitions_unmaterialized"] >= 4
+    assert report["summary"]["leaf_partitions_unmaterialized"] >= 3
     # HELIX has 3 static partitions, derived has 1, raw dynamic dim
     # is empty on a fresh instance.
     assert report["leaves_unmaterialized"]["enriched_helix_alpss"] == 3
-    assert report["leaves_unmaterialized"]["enriched_maxima_derived"] == 1
-    assert report["leaves_unmaterialized"]["enriched_maxima_raw"] == 0
+    assert report["leaves_unmaterialized"]["enriched_maxima_run"] == 0
+    assert report["leaves_unmaterialized"]["enriched_maxima_run"] == 0
     assert report["leaves"] == {}
 
 

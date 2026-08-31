@@ -34,9 +34,9 @@ def test_phase5_jobs_and_schedules_registered():
     expected_jobs = {
         "process_helix_assets_job",
         "coord_enrichment_job",
-        "coord_enrichment_maxima_raw_job",
+        "coord_enrichment_maxima_job",
         "coord_enrichment_helix_alpss_job",
-        "coord_enrichment_maxima_derived_job",
+        "coord_enrichment_maxima_partition_job",
     }
     assert expected_jobs.issubset(job_names), (
         f"missing jobs: {expected_jobs - job_names}"
@@ -45,9 +45,8 @@ def test_phase5_jobs_and_schedules_registered():
     schedule_names = {s.name for s in repo.schedule_defs}
     expected_schedules = {
         "coord_enrichment_state_report_schedule",
-        "coord_enrichment_maxima_raw_weekly_schedule",
+        "coord_enrichment_maxima_weekly_schedule",
         "coord_enrichment_helix_alpss_weekly_schedule",
-        "coord_enrichment_maxima_derived_weekly_schedule",
     }
     assert expected_schedules.issubset(schedule_names), (
         f"missing schedules: {expected_schedules - schedule_names}"

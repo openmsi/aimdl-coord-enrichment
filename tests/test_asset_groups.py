@@ -19,8 +19,7 @@ EXPECTED_GROUPS = {
     "pdv_processing_manifest": "helix_spreadsheet",
     "helix_alpss_provenance_tagged": "helix_alpss",
     "enriched_helix_alpss": "helix_alpss",
-    "enriched_maxima_raw": "maxima_raw",
-    "enriched_maxima_derived": "maxima_derived",
+    "enriched_maxima_run": "maxima",
     "coord_transform_config_snapshot": "coord_enrichment_core",
     "enrichable_items_inventory": "coord_enrichment_core",
     "coord_enrichment_report": "coord_enrichment_reporting",
@@ -31,8 +30,7 @@ EXPECTED_GROUPS = {
 EXPECTED_COUNTS = {
     "helix_spreadsheet": 3,
     "helix_alpss": 2,
-    "maxima_raw": 1,
-    "maxima_derived": 1,
+    "maxima": 1,
     "coord_enrichment_core": 2,
     "coord_enrichment_reporting": 3,
 }

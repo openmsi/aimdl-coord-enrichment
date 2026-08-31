@@ -3,7 +3,7 @@
 ## Dagster Jobs Overview
 
 This repo runs **two DAGs** in one `Definitions` registry, spread across
-**six jobs**. One DAG is spreadsheet-driven (HELIX PDV traces); the other is
+**five jobs**. One DAG is spreadsheet-driven (HELIX PDV traces); the other is
 the partitioned `coord_enrichment` DAG that fans out across HELIX ALPSS and
 MAXIMA data types. Every coordinate-writing asset writes the same core fields
 to Girder items: `Station_X`, `Station_Y`, `Sample_X`, `Sample_Y`, and a
@@ -27,9 +27,10 @@ each HELIX and MAXIMA file type, and where those coordinates come from:
 | HELIX | `pdv_alpss_output` | derived | `enriched_helix_alpss` | `coord_enrichment_helix_alpss_job` | Inherited from parent `pdv_trace` |
 | HELIX | `pdv_alpss_result` | derived | `enriched_helix_alpss` | `coord_enrichment_helix_alpss_job` | Inherited from parent `pdv_trace` |
 | HELIX | `pdv_alpss_results` | derived | `enriched_helix_alpss` | `coord_enrichment_helix_alpss_job` | Inherited from parent `pdv_trace` |
-| MAXIMA | `xrd_raw` | leaf | `enriched_maxima_raw` | `coord_enrichment_maxima_raw_job` / `…_partition_job` | MAXIMA `instructions.txt` scan-point |
-| MAXIMA | `xrf_raw` | leaf | `enriched_maxima_raw` | `coord_enrichment_maxima_raw_job` / `…_partition_job` | MAXIMA `instructions.txt` scan-point |
-| MAXIMA | `xrd_derived` | derived | `enriched_maxima_derived` | `coord_enrichment_maxima_derived_job` | Inherited from parent `xrd_raw` |
+| MAXIMA | `xrd_raw` | leaf | `enriched_maxima_run` | `coord_enrichment_maxima_job` / `…_partition_job` | MAXIMA `instructions.txt` scan-point |
+| MAXIMA | `xrf_raw` | leaf | `enriched_maxima_run` | `coord_enrichment_maxima_job` / `…_partition_job` | MAXIMA `instructions.txt` scan-point |
+| MAXIMA | `xrd_derived` | leaf | `enriched_maxima_run` | `coord_enrichment_maxima_job` / `…_partition_job` | MAXIMA `instructions.txt` scan-point |
+| MAXIMA | `xrd_visualization` | leaf | `enriched_maxima_run` | `coord_enrichment_maxima_job` / `…_partition_job` | MAXIMA `instructions.txt` scan-point |
 
 **Provenance-only (no coordinates):** `helix_alpss_provenance_tagged` writes
 `meta.prov.wasDerivedFrom` on the three HELIX ALPSS types so
@@ -102,16 +103,16 @@ PDV inventory as an ERROR in the Dagster UI.
 - **Partitioning:** none.
 - **What it does:** Inventories all in-scope items, **tags HELIX ALPSS provenance** (`helix_alpss_provenance_tagged` writes `meta.prov.wasDerivedFrom` so ALPSS items point at their parent PDV trace), observes PDV coverage, and emits a status report. Writes provenance links only — **no coordinate writes**.
 
-### 3. `coord_enrichment_maxima_raw_job` — MAXIMA raw, weekly reconciliation
-- **Trigger:** `coord_enrichment_maxima_raw_weekly_schedule` (Sunday 04:00 ET, dry-run, STOPPED).
-- **Partitioning:** `MAXIMA_RAW_PARTITIONS` = `MultiPartitionsDefinition({data_type: [xrd_raw, xrf_raw], run: dynamic "maxima_raw_run"})`.
-- **What it does:** Gap-filling sweep — enumerates all registered `(data_type, run)` partitions and materializes only those lacking a successful run. **Writes coordinates to `xrd_raw` and `xrf_raw` items.**
-- **Coordinate source:** `Station_X/Y` parsed from the MAXIMA `instructions.txt` scan-point table for the run; timestamp from `meta.experiment_date`.
-- **Writing asset:** `enriched_maxima_raw`.
+### 3. `coord_enrichment_maxima_job` — MAXIMA, weekly reconciliation
+- **Trigger:** `coord_enrichment_maxima_weekly_schedule` (Sunday 04:00 ET, dry-run, STOPPED).
+- **Partitioning:** `MAXIMA_RUN_PARTITIONS` = `DynamicPartitionsDefinition("maxima_run")`, one partition per AIMD-L run (`<igsn>//<experiment_date>`).
+- **What it does:** Gap-filling sweep — enumerates all registered run partitions and materializes only those lacking a successful run. **Writes coordinates to every in-scope MAXIMA item the run produced: `xrd_raw`, `xrf_raw`, `xrd_derived`, `xrd_visualization`.**
+- **Coordinate source:** `Station_X/Y` parsed from the run's `instructions.txt` scan-point table, selected by the `scan_point_<i>` prefix in each filename; timestamp from `meta.experiment_date`.
+- **Writing asset:** `enriched_maxima_run`.
 
-### 4. `coord_enrichment_maxima_raw_partition_job` — MAXIMA raw, event-driven
-- **Trigger:** `maxima_raw_discovery_sensor` (polls `/aimdl/partition`, registers new run keys, emits deduped single-partition RunRequests; STOPPED).
-- **Partitioning / writing asset:** identical selection to job 3 (`enriched_maxima_raw` → `xrd_raw`, `xrf_raw`). Kept as a separate job purely so sensor-driven runs are filterable from the weekly reconciliation runs in the UI; the partition key — not the job — decides what materializes.
+### 4. `coord_enrichment_maxima_partition_job` — MAXIMA, event-driven
+- **Trigger:** `maxima_run_discovery_sensor` (polls `/aimdl/partition`, registers new run keys, emits one deduped RunRequest per run; STOPPED).
+- **Partitioning / writing asset:** identical selection to job 3. Kept as a separate job purely so sensor-driven runs are filterable from the weekly reconciliation runs in the UI; the partition key — not the job — decides what materializes.
 
 ### 5. `coord_enrichment_helix_alpss_job` — HELIX ALPSS derived
 - **Trigger:** `coord_enrichment_helix_alpss_weekly_schedule` (Sunday 04:30 ET, STOPPED).
@@ -119,11 +120,14 @@ PDV inventory as an ERROR in the Dagster UI.
 - **What it does:** Ensures ALPSS items are provenance-tagged, then **enriches `pdv_alpss_output`, `pdv_alpss_result`, and `pdv_alpss_results` items** by inheriting `Station_X/Y` from their parent `pdv_trace` (via `prov.wasDerivedFrom`) and re-applying the parent's recorded transform version.
 - **Writing asset:** `enriched_helix_alpss`.
 
-### 6. `coord_enrichment_maxima_derived_job` — MAXIMA derived
-- **Trigger:** `coord_enrichment_maxima_derived_weekly_schedule` (Sunday 04:30 ET, STOPPED).
-- **Partitioning:** `MAXIMA_DERIVED_PARTITIONS` = static `["MAXIMA/xrd_derived"]`.
-- **What it does:** **Enriches `xrd_derived` items** by inheriting `Station_X/Y` from the parent `xrd_raw` master.h5 (linked via `prov.wasDerivedFrom`, written upstream by the `amdee_xrd` Girder plugin) and re-applying the parent's recorded transform version.
-- **Writing asset:** `enriched_maxima_derived`.
+> **The run is the unit of work.** One `instructions.txt` per run supplies the
+> coordinates for everything the run produced. Storage nests `raw/` inside the
+> run folder while lineage runs the other way — the derived products are made
+> *from* the raw measurements — but neither shape is a partition boundary, so
+> they enrich together. `xrd_derived` no longer inherits from its parent
+> `master.h5`: the parent read the same `instructions.txt`, so inheritance
+> recorded a path rather than an origin. Any `prov.wasDerivedFrom` link is still
+> recorded in `coord_provenance` as a cross-reference.
 
 > All `coord_enrichment` schedules and both `coord_enrichment` sensors ship
 > **STOPPED** and dry-run by default; an operator opts in via the Dagster UI.

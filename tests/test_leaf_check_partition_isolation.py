@@ -4,7 +4,7 @@ load across the partition cross-product.
 Defect (found 2026-05-15 during the live §3 rehearsal): the leaf
 asset checks took their partitioned asset as a positional input, so
 running the partitioned job for ONE partition made Dagster's
-IOManager load `enriched_maxima_raw` for *other*, unmaterialized
+IOManager load `enriched_maxima_run` for *other*, unmaterialized
 partitions -> FileNotFoundError -> RUN_FAILURE, even though the
 asset materialized cleanly. Same defect family as the
 coord_enrichment_report fix (it reads the event log via deps=).
@@ -24,7 +24,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from dagster import DagsterInstance, MultiPartitionKey, materialize
+from dagster import DagsterInstance, materialize
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -33,9 +33,9 @@ from aimdl_coord_enrichment.coord_enrichment.config_snapshot import (
     coord_transform_config_snapshot,
 )
 from aimdl_coord_enrichment.coord_enrichment.enrichment_leaves import (
-    enriched_maxima_raw,
-    enrichment_success_rate_maxima_raw,
-    no_coord_transform_failures_maxima_raw,
+    enriched_maxima_run,
+    enrichment_success_rate_maxima,
+    no_coord_transform_failures_maxima,
 )
 
 requires_transformer = pytest.mark.skipif(
@@ -92,7 +92,7 @@ def _fetch_partition_details(girder, data_type, key):
 def test_partition_job_succeeds_with_unmaterialized_sibling_partition():
     with DagsterInstance.ephemeral() as instance:
         instance.add_dynamic_partitions(
-            "maxima_raw_run", [MATERIALIZED_KEY, SIBLING_KEY]
+            "maxima_run", [MATERIALIZED_KEY, SIBLING_KEY]
         )
         girder = _girder_mock()
 
@@ -112,18 +112,16 @@ def test_partition_job_succeeds_with_unmaterialized_sibling_partition():
             result = materialize(
                 [
                     coord_transform_config_snapshot,
-                    enriched_maxima_raw,
-                    enrichment_success_rate_maxima_raw,
-                    no_coord_transform_failures_maxima_raw,
+                    enriched_maxima_run,
+                    enrichment_success_rate_maxima,
+                    no_coord_transform_failures_maxima,
                 ],
                 instance=instance,
                 resources={"girder": girder},
-                partition_key=MultiPartitionKey(
-                    {"data_type": "xrd_raw", "run": MATERIALIZED_KEY}
-                ),
+                partition_key=MATERIALIZED_KEY,
                 run_config={
                     "ops": {
-                        "enriched_maxima_raw": {"config": {"dry_run": True}}
+                        "enriched_maxima_run": {"config": {"dry_run": True}}
                     }
                 },
             )
@@ -135,6 +133,6 @@ def test_partition_job_succeeds_with_unmaterialized_sibling_partition():
         for e in result.get_asset_check_evaluations()
     }
     assert check_evals == {
-        "enrichment_success_rate_maxima_raw": True,
-        "no_coord_transform_failures_maxima_raw": True,
+        "enrichment_success_rate_maxima": True,
+        "no_coord_transform_failures_maxima": True,
     }, check_evals

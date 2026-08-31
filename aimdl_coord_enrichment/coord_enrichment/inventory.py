@@ -9,8 +9,6 @@ from dagster import (
     AssetExecutionContext,
     DynamicPartitionsDefinition,
     MetadataValue,
-    MultiPartitionsDefinition,
-    StaticPartitionsDefinition,
     asset,
     asset_check,
 )
@@ -32,61 +30,26 @@ logger = logging.getLogger(__name__)
 # with full meta (experiment_date, prov, checksum, ...) intact,
 # unlike /aimdl/datafiles which strips meta to data_type and igsn.
 PARTITION_AWARE_DATA_TYPES = frozenset(
-    {"xrd_raw", "xrf_raw", "xrd_derived", "xrd_metadata"}
+    {"xrd_raw", "xrf_raw", "xrd_derived", "xrd_visualization", "xrd_metadata"}
 )
 
-MAXIMA_RAW_DATA_TYPE_PARTITIONS = StaticPartitionsDefinition(
-    ["xrd_raw", "xrf_raw"]
-)
-
-MAXIMA_RUN_PARTITIONS = DynamicPartitionsDefinition(
-    name="maxima_raw_run"
-)
-
-MAXIMA_RAW_PARTITIONS = MultiPartitionsDefinition(
-    {
-        "data_type": MAXIMA_RAW_DATA_TYPE_PARTITIONS,
-        "run": MAXIMA_RUN_PARTITIONS,
-    }
-)
+# One partition per AIMD-L run, keyed "<igsn>//<experiment_date>".
+#
+# A run is the unit of work: one instructions.txt supplies the coordinates for
+# every file the run produced, raw measurements and derived products alike.
+# Storage nests raw/ inside the run folder, but lineage runs the other way —
+# the derived products are made FROM the raw measurements. Neither is a
+# separate partition; they materialize together.
+#
+# Replaced MultiPartitionsDefinition({data_type, run}): splitting a run by
+# data_type meant fetching and parsing the same instructions.txt once per
+# data_type, and it forced enriched_maxima_derived to depend on the raw
+# partitions through AllPartitionMapping.
+MAXIMA_RUN_PARTITIONS = DynamicPartitionsDefinition(name="maxima_run")
 
 
 def _partition_key(instrument: str, data_type: str) -> str:
     return f"{instrument}/{data_type}"
-
-
-def filter_to_raw_subfolder(
-    items: list[dict[str, Any]], girder: GirderConnection,
-) -> list[dict[str, Any]]:
-    """Keep only items whose immediate Girder folder is named ``raw``.
-
-    Used by the inventory to implement the §7.1 / §7.5 scope gate for
-    ``xrd_derived`` items: root-level TIFFs live outside ``raw/`` and
-    are excluded.  Folder names are batch-fetched (one request per
-    unique ``folderId``) to avoid per-item round trips.
-    """
-    folder_ids = {it.get("folderId") for it in items if it.get("folderId")}
-    name_by_id: dict[str, str] = {}
-    for fid in folder_ids:
-        try:
-            folder = girder.get(f"folder/{fid}")
-            name_by_id[fid] = folder.get("name", "")
-        except Exception as exc:
-            logger.warning(
-                "Could not fetch folder %s while filtering xrd_derived: %s",
-                fid, exc,
-            )
-            name_by_id[fid] = ""
-
-    kept = [it for it in items if name_by_id.get(it.get("folderId")) == "raw"]
-    dropped_count = len(items) - len(kept)
-    if dropped_count:
-        logger.info(
-            "xrd_derived filter: kept %d in-raw items, dropped %d non-raw "
-            "(e.g. root TIFFs)",
-            len(kept), dropped_count,
-        )
-    return kept
 
 
 def _is_in_scope(item: dict) -> bool:
@@ -123,8 +86,6 @@ def enrichable_items_inventory(
         else:
             items = fetch_all_aimdl_datafiles(girder, dt)
         in_scope = [it for it in items if _is_in_scope(it)]
-        if dt == "xrd_derived":
-            in_scope = filter_to_raw_subfolder(in_scope, girder)
         instrument = instrument_for_data_type(dt)
         key = _partition_key(instrument, dt)
         inventory[key] = in_scope

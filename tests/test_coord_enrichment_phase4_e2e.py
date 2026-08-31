@@ -5,7 +5,8 @@ Runs the full Phase 4 surface against a mock Girder pre-populated with:
   - Two HELIX ALPSS items (pdv_alpss_output + pdv_alpss_results)
     with prov.wasDerivedFrom → the pdv_trace
   - One fully-enriched xrd_raw master.h5 (MAXIMA, coord_provenance present)
-  - One xrd_derived item with prov.wasDerivedFrom → the master.h5
+  (xrd_derived moved to enriched_maxima_run — it reads instructions.txt
+   directly rather than inheriting; see test_coord_enrichment_maxima_raw.py)
 
 Verifies that all three derived items inherit coherently (Sample_X/Y
 match parent transform, provenance station_coord_source.kind ==
@@ -31,7 +32,6 @@ from aimdl_coord_enrichment.coord_enrichment.config_snapshot import (
     coord_transform_config_snapshot,
 )
 from aimdl_coord_enrichment.coord_enrichment.helix_alpss_leaf import enriched_helix_alpss
-from aimdl_coord_enrichment.coord_enrichment.maxima_derived_leaf import enriched_maxima_derived
 from aimdl_coord_enrichment.coord_enrichment.pdv_observer import helix_pdv_coverage_observer
 from aimdl_coord_enrichment.coord_enrichment.report import coord_enrichment_report
 from aimdl_coord_enrichment.coord_enrichment.manifest import coord_enrichment_manifest
@@ -190,7 +190,7 @@ def girder_mock():
 def _report_inheritance_leaf_event(instance, asset_name, partition_key, result):
     """Persist a runless materialization for one inheritance-leaf partition.
 
-    Both enriched_helix_alpss and enriched_maxima_derived write the
+    enriched_helix_alpss writes the
     same metadata key set, so one helper covers both.
     """
     counts = result["counts"]
@@ -246,22 +246,6 @@ def _run_phase4_dag(girder_mock):
                 instance, "enriched_helix_alpss", pkey, leaf_result,
             )
 
-        derived_results = {}
-        for pkey in ["MAXIMA/xrd_derived"]:
-            ctx = build_asset_context(partition_key=pkey, instance=instance)
-            with patch(
-                "aimdl_coord_enrichment.coord_enrichment.maxima_derived_leaf."
-                "transform_with_named_version",
-                side_effect=_mock_transform_any,
-            ):
-                leaf_result = enriched_maxima_derived(
-                    ctx, config, INVENTORY, snap, girder_mock,
-                )
-                derived_results[pkey] = leaf_result
-            _report_inheritance_leaf_event(
-                instance, "enriched_maxima_derived", pkey, leaf_result,
-            )
-
         observer_ctx = build_asset_context(instance=instance)
         with patch(
             "aimdl_coord_enrichment.coord_enrichment.pdv_observer.fetch_all_aimdl_datafiles",
@@ -281,17 +265,16 @@ def _run_phase4_dag(girder_mock):
             manifest_ctx, config, report, girder_mock,
         )
 
-    return alpss_results, derived_results, observer_result, report, manifest
+    return alpss_results, observer_result, report, manifest
 
 
 def test_phase4_enrichment_writes(girder_mock):
-    """Phase 4: 2 ALPSS items + 1 xrd_derived = 3 enrichment writes + 1 manifest."""
-    alpss_results, derived_results, _, _, _ = _run_phase4_dag(girder_mock)
+    """Phase 4: 2 ALPSS items = 2 enrichment writes + 1 manifest."""
+    alpss_results, _, _, _ = _run_phase4_dag(girder_mock)
 
     assert alpss_results["HELIX/pdv_alpss_output"]["counts"]["written"] == 1
     assert alpss_results["HELIX/pdv_alpss_result"]["counts"]["seen"] == 0
     assert alpss_results["HELIX/pdv_alpss_results"]["counts"]["written"] == 1
-    assert derived_results["MAXIMA/xrd_derived"]["counts"]["written"] == 1
 
     all_calls = girder_mock.addMetadataToItem.call_args_list
     enrichment_calls = [
@@ -302,14 +285,14 @@ def test_phase4_enrichment_writes(girder_mock):
         c for c in all_calls
         if "coord_enrichment_status" in (c[0][1] if len(c[0]) > 1 else {})
     ]
-    assert len(enrichment_calls) == 3
+    assert len(enrichment_calls) == 2
     assert len(manifest_calls) == 1
     assert manifest_calls[0][0][0] == TRACKING_ITEM_ID
 
 
 def test_phase4_helix_alpss_inherits_parent_coords(girder_mock):
     """ALPSS items inherit Station_X/Y from parent PDV trace and transform to Sample coords."""
-    alpss_results, _, _, _, _ = _run_phase4_dag(girder_mock)
+    alpss_results, _, _, _ = _run_phase4_dag(girder_mock)
 
     all_calls = girder_mock.addMetadataToItem.call_args_list
     alpss_calls = [
@@ -330,31 +313,9 @@ def test_phase4_helix_alpss_inherits_parent_coords(girder_mock):
         assert prov["instrument"] == "HELIX"
         assert prov["transform_version"] == "HELIX/v1"
 
-
-def test_phase4_maxima_derived_inherits_parent_coords(girder_mock):
-    """xrd_derived item inherits from the xrd_raw master.h5 parent."""
-    _, derived_results, _, _, _ = _run_phase4_dag(girder_mock)
-
-    all_calls = girder_mock.addMetadataToItem.call_args_list
-    derived_calls = [c for c in all_calls if c[0][0] == "xrd-derived-001"]
-    assert len(derived_calls) == 1
-
-    payload = derived_calls[0][0][1]
-    assert payload["Station_X"] == 5.0
-    assert payload["Station_Y"] == -3.0
-    assert payload["Sample_X"] == 105.0
-    assert payload["Sample_Y"] == 97.0
-    prov = payload["coord_provenance"]
-    assert prov["station_coord_source"]["kind"] == "inherited"
-    assert prov["station_coord_source"]["parent_item_id"] == "xrd-raw-master-001"
-    assert prov["station_coord_source"]["parent_data_type"] == "xrd_raw"
-    assert prov["instrument"] == "MAXIMA"
-    assert prov["transform_version"] == "MAXIMA/v1"
-
-
 def test_phase4_observer_reports_coverage(girder_mock):
     """Observer counts pdv_trace coverage — one fully enriched item."""
-    _, _, observer_result, _, _ = _run_phase4_dag(girder_mock)
+    _, observer_result, _, _ = _run_phase4_dag(girder_mock)
 
     assert observer_result["total"] == 1
     assert observer_result["fully_enriched"] == 1
@@ -363,14 +324,15 @@ def test_phase4_observer_reports_coverage(girder_mock):
 
 
 def test_phase4_report_aggregates_all_leaves(girder_mock):
-    """Report aggregates counts from HELIX ALPSS + MAXIMA derived leaves."""
-    _, _, _, report, _ = _run_phase4_dag(girder_mock)
+    """Report aggregates counts from the HELIX ALPSS leaf partitions."""
+    _, _, report, _ = _run_phase4_dag(girder_mock)
 
     summary = report["summary"]
-    # 1 write across each of pdv_alpss_output, pdv_alpss_results,
-    # MAXIMA/xrd_derived; pdv_alpss_result has 0 in-scope items.
-    assert summary["total_writes"] == 3
-    assert summary["leaf_partitions_covered"] == 4
+    # 1 write each from pdv_alpss_output and pdv_alpss_results;
+    # pdv_alpss_result has 0 in-scope items. MAXIMA is no longer an
+    # inheritance leaf — it materializes per run via enriched_maxima_run.
+    assert summary["total_writes"] == 2
+    assert summary["leaf_partitions_covered"] == 3
 
     assert "pdv_trace" in report["coverage"]
     assert report["coverage"]["pdv_trace"]["fully_enriched"] == 1
@@ -381,7 +343,7 @@ def test_phase4_report_aggregates_all_leaves(girder_mock):
 
 def test_phase4_manifest_written(girder_mock):
     """Manifest is written to the configured tracking item."""
-    _, _, _, _, manifest = _run_phase4_dag(girder_mock)
+    _, _, _, manifest = _run_phase4_dag(girder_mock)
 
     assert "write_skipped" not in manifest
     assert "write_failed" not in manifest

@@ -187,7 +187,7 @@ def test_alpss_inherits_v2_transform_when_parent_v2():
     assert "HELIX/v2" in result["version_counter"]
 
 
-def test_alpss_skips_when_parent_not_enriched():
+def test_alpss_excludes_when_parent_not_enriched():
     parent = _parent(station_x=None, include_prov=True)
     # Parent missing Station_X → inherit_from_parent raises ResolutionError
     parent["meta"]["Station_X"] = None
@@ -196,9 +196,10 @@ def test_alpss_skips_when_parent_not_enriched():
     result, girder = _run_asset([item], dry_run=False, parent=parent)
 
     girder.addMetadataToItem.assert_not_called()
-    assert result["counts"]["resolution_errors"] == 1
-    assert len(result["resolution_errors"]) == 1
-    assert result["resolution_errors"][0]["stage"] == "inherit_from_parent"
+    # Out of scope, not a failure: nothing to inherit from yet.
+    assert result["counts"]["resolution_errors"] == 0
+    assert result["resolution_errors"] == []
+    assert result["excluded"]["total"] == 1
 
 
 def test_alpss_skips_when_stored_prov_identical():

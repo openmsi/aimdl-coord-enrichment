@@ -7,11 +7,10 @@ import pytest
 from dagster import build_asset_context
 
 from aimdl_coord_enrichment.coord_enrichment.inventory import (
-    MAXIMA_RAW_PARTITIONS,
+    MAXIMA_RUN_PARTITIONS,
     PARTITION_AWARE_DATA_TYPES,
     _is_in_scope,
     enrichable_items_inventory,
-    filter_to_raw_subfolder,
     inventory_nonempty_per_instrument,
 )
 from aimdl_coord_enrichment.instruments import all_in_scope_data_types, instrument_for_data_type
@@ -222,100 +221,33 @@ def test_check_warns_on_empty_partition():
     assert "MAXIMA/xrf_raw" in result.description
 
 
-# ── MAXIMA_RAW_PARTITIONS ───────────────────────────────────────────
+# ── MAXIMA_RUN_PARTITIONS ───────────────────────────────────────────
 
 
 def test_partition_definition_shape():
-    from dagster import (
-        DagsterInstance,
-        DynamicPartitionsDefinition,
-        MultiPartitionsDefinition,
-        StaticPartitionsDefinition,
-    )
+    """One partition per AIMD-L run — no data_type dimension.
 
-    assert isinstance(MAXIMA_RAW_PARTITIONS, MultiPartitionsDefinition)
-    dims = {d.name: d.partitions_def for d in MAXIMA_RAW_PARTITIONS.partitions_defs}
-    assert set(dims) == {"data_type", "run"}
-    assert isinstance(dims["data_type"], StaticPartitionsDefinition)
-    assert dims["data_type"].get_partition_keys() == ["xrd_raw", "xrf_raw"]
-    assert isinstance(dims["run"], DynamicPartitionsDefinition)
-    assert dims["run"].name == "maxima_raw_run"
-    # No dynamic run keys registered → empty cartesian product.
+    A run is the unit of work: one instructions.txt covers every file the run
+    produced, so splitting by data_type would re-fetch and re-parse it per type.
+    """
+    from dagster import DagsterInstance, DynamicPartitionsDefinition
+
+    assert isinstance(MAXIMA_RUN_PARTITIONS, DynamicPartitionsDefinition)
+    assert MAXIMA_RUN_PARTITIONS.name == "maxima_run"
     with DagsterInstance.ephemeral() as instance:
-        assert MAXIMA_RAW_PARTITIONS.get_partition_keys(
+        assert MAXIMA_RUN_PARTITIONS.get_partition_keys(
             dynamic_partitions_store=instance
         ) == []
 
 
-# ── filter_to_raw_subfolder ───────────────────────────────────────
+def test_registered_run_keys_are_the_partition_keys():
+    from dagster import DagsterInstance
+
+    with DagsterInstance.ephemeral() as instance:
+        instance.add_dynamic_partitions("maxima_run", ["IGSN1//T1", "IGSN2//T2"])
+        keys = MAXIMA_RUN_PARTITIONS.get_partition_keys(
+            dynamic_partitions_store=instance
+        )
+    assert sorted(keys) == ["IGSN1//T1", "IGSN2//T2"]
 
 
-def _xrd_derived_item(item_id, folder_id):
-    return {
-        "_id": item_id,
-        "name": f"scan_point_0_{item_id}.csv",
-        "folderId": folder_id,
-        "meta": {"data_type": "xrd_derived", "igsn": "JHAMAL00018-009"},
-    }
-
-
-def test_xrd_derived_filter_keeps_in_raw_items():
-    raw_item = _xrd_derived_item("item_raw", "folder_raw")
-    root_item = _xrd_derived_item("item_root", "folder_root")
-
-    girder = MagicMock()
-
-    def get_folder(path):
-        if path == "folder/folder_raw":
-            return {"_id": "folder_raw", "name": "raw"}
-        if path == "folder/folder_root":
-            return {"_id": "folder_root", "name": "JHAMAL00018-009_run"}
-        raise ValueError(f"unexpected path: {path}")
-
-    girder.get.side_effect = get_folder
-
-    result = filter_to_raw_subfolder([raw_item, root_item], girder)
-
-    assert len(result) == 1
-    assert result[0]["_id"] == "item_raw"
-
-
-def test_xrd_derived_filter_logs_drop_counts(caplog):
-    raw_item = _xrd_derived_item("item_raw", "folder_raw")
-    root_item = _xrd_derived_item("item_root", "folder_root")
-
-    girder = MagicMock()
-
-    def get_folder(path):
-        if path == "folder/folder_raw":
-            return {"_id": "folder_raw", "name": "raw"}
-        return {"_id": "folder_root", "name": "JHAMAL00018-009_run"}
-
-    girder.get.side_effect = get_folder
-
-    with caplog.at_level(logging.INFO, logger="aimdl_coord_enrichment.coord_enrichment.inventory"):
-        filter_to_raw_subfolder([raw_item, root_item], girder)
-
-    assert any("kept 1 in-raw" in msg for msg in caplog.messages)
-    assert any("dropped 1 non-raw" in msg for msg in caplog.messages)
-
-
-def test_xrd_derived_filter_handles_fetch_failure(caplog):
-    ok_item = _xrd_derived_item("item_ok", "folder_ok")
-    bad_item = _xrd_derived_item("item_bad", "folder_bad")
-
-    girder = MagicMock()
-
-    def get_folder(path):
-        if path == "folder/folder_ok":
-            return {"_id": "folder_ok", "name": "raw"}
-        raise ConnectionError("network error")
-
-    girder.get.side_effect = get_folder
-
-    with caplog.at_level(logging.WARNING, logger="aimdl_coord_enrichment.coord_enrichment.inventory"):
-        result = filter_to_raw_subfolder([ok_item, bad_item], girder)
-
-    assert len(result) == 1
-    assert result[0]["_id"] == "item_ok"
-    assert any("network error" in msg for msg in caplog.messages)

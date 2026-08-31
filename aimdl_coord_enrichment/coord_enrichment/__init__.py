@@ -12,7 +12,7 @@ Module layout (populated across Phase 3 steps):
   config_snapshot.py     — coord_transform_config_snapshot asset
   inventory.py           — enrichable_items_inventory asset + partitions
   provenance_tagging.py  — helix_alpss_provenance_tagged asset + check
-  enrichment_leaves.py   — enriched_maxima_raw asset + checks
+  enrichment_leaves.py   — enriched_maxima_run asset + checks
   overwrite.py           — pure overwrite-policy evaluator
   cache.py               — per-run-folder cache helpers
   pdv_observer.py        — helix_pdv_coverage_observer asset + check
@@ -25,11 +25,8 @@ from aimdl_coord_enrichment.coord_enrichment.config_snapshot import (
     coord_transform_config_snapshot,
 )
 from aimdl_coord_enrichment.coord_enrichment.inventory import (
-    MAXIMA_RAW_DATA_TYPE_PARTITIONS,
-    MAXIMA_RAW_PARTITIONS,
     MAXIMA_RUN_PARTITIONS,
     enrichable_items_inventory,
-    filter_to_raw_subfolder,
     inventory_nonempty_per_instrument,
 )
 from aimdl_coord_enrichment.coord_enrichment.provenance_tagging import (
@@ -37,9 +34,9 @@ from aimdl_coord_enrichment.coord_enrichment.provenance_tagging import (
     helix_alpss_provenance_tagged,
 )
 from aimdl_coord_enrichment.coord_enrichment.enrichment_leaves import (
-    enriched_maxima_raw,
-    enrichment_success_rate_maxima_raw,
-    no_coord_transform_failures_maxima_raw,
+    enriched_maxima_run,
+    enrichment_success_rate_maxima,
+    no_coord_transform_failures_maxima,
 )
 from aimdl_coord_enrichment.coord_enrichment.inheritance import (
     InheritedCoords,
@@ -52,13 +49,6 @@ from aimdl_coord_enrichment.coord_enrichment.helix_alpss_leaf import (
     enrichment_success_rate_helix_alpss,
     no_coord_transform_failures_helix_alpss,
 )
-from aimdl_coord_enrichment.coord_enrichment.maxima_derived_leaf import (
-    MAXIMA_DERIVED_PARTITIONS,
-    enriched_maxima_derived,
-    enrichment_success_rate_maxima_derived,
-    maxima_xrd_derived_provenance_valid,
-    no_coord_transform_failures_maxima_derived,
-)
 from aimdl_coord_enrichment.coord_enrichment.pdv_observer import (
     helix_pdv_coverage_observer,
     pdv_coverage_above_threshold,
@@ -70,26 +60,18 @@ from aimdl_coord_enrichment.coord_enrichment.manifest import coord_enrichment_ma
 __all__ = [
     "CoordEnrichmentConfig",
     "coord_transform_config_snapshot",
-    "MAXIMA_RAW_DATA_TYPE_PARTITIONS",
-    "MAXIMA_RAW_PARTITIONS",
     "MAXIMA_RUN_PARTITIONS",
     "enrichable_items_inventory",
-    "filter_to_raw_subfolder",
     "inventory_nonempty_per_instrument",
     "all_helix_alpss_tagged",
     "helix_alpss_provenance_tagged",
-    "enriched_maxima_raw",
-    "enrichment_success_rate_maxima_raw",
-    "no_coord_transform_failures_maxima_raw",
+    "enriched_maxima_run",
+    "enrichment_success_rate_maxima",
+    "no_coord_transform_failures_maxima",
     "HELIX_ALPSS_PARTITIONS",
     "enriched_helix_alpss",
     "enrichment_success_rate_helix_alpss",
     "no_coord_transform_failures_helix_alpss",
-    "MAXIMA_DERIVED_PARTITIONS",
-    "enriched_maxima_derived",
-    "enrichment_success_rate_maxima_derived",
-    "maxima_xrd_derived_provenance_valid",
-    "no_coord_transform_failures_maxima_derived",
     "InheritedCoords",
     "inherit_from_parent",
     "inherited_station_coord_source",

@@ -79,8 +79,18 @@ def evaluate_success_rate(
     resolution_errors: int,
     write_errors_count: int,
     partition_label: str,
+    excluded: int = 0,
 ) -> AssetCheckResult:
-    """WARN if <90% of items in the partition ended in a successful decision."""
+    """WARN if <90% of the *in-scope* items ended in a successful decision.
+
+    ``excluded`` items are out of scope by policy — files whose own metadata or
+    filename means no coordinate was ever available for them (see
+    ``EXCLUSION_REASONS``). They are counted and grouped in the asset metadata
+    but removed from this denominator, so a partition that is entirely
+    non-standard reads "0 in scope" rather than "0% success". Excluding them
+    from the numerator only would leave the WARN in place and defeat the point.
+    """
+    in_scope = seen - excluded
     if seen == 0:
         return AssetCheckResult(
             passed=True,
@@ -88,18 +98,35 @@ def evaluate_success_rate(
             metadata={"note": MetadataValue.text("partition empty")},
             description="Partition empty; no items to check.",
         )
+    if in_scope <= 0:
+        return AssetCheckResult(
+            passed=True,
+            severity=AssetCheckSeverity.WARN,
+            metadata={
+                "excluded": MetadataValue.int(excluded),
+                "seen": MetadataValue.int(seen),
+                "partition": MetadataValue.text(partition_label),
+            },
+            description=(
+                f"No in-scope items: all {excluded} of {seen} excluded "
+                "(non-standard input; see excluded_by_reason)."
+            ),
+        )
     success = written + simulated_dry_run + skipped_no_change
-    rate = success / seen
+    rate = success / in_scope
+    suffix = f"; {excluded} excluded" if excluded else ""
     return AssetCheckResult(
         passed=rate >= 0.9,
         severity=AssetCheckSeverity.WARN,
         metadata={
             "success_rate": MetadataValue.float(round(rate, 3)),
+            "in_scope": MetadataValue.int(in_scope),
+            "excluded": MetadataValue.int(excluded),
             "write_errors": MetadataValue.int(write_errors_count),
             "resolution_errors": MetadataValue.int(resolution_errors),
             "partition": MetadataValue.text(partition_label),
         },
-        description=f"Success rate: {rate:.1%} ({success}/{seen})",
+        description=f"Success rate: {rate:.1%} ({success}/{in_scope}){suffix}",
     )
 
 

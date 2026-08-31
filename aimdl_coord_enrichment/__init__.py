@@ -23,18 +23,14 @@ from aimdl_coord_enrichment.coord_enrichment import (
     coord_transform_config_snapshot,
     enrichable_items_inventory,
     enriched_helix_alpss,
-    enriched_maxima_derived,
-    enriched_maxima_raw,
+    enriched_maxima_run,
     enrichment_success_rate_helix_alpss,
-    enrichment_success_rate_maxima_derived,
-    enrichment_success_rate_maxima_raw,
+    enrichment_success_rate_maxima,
     helix_alpss_provenance_tagged,
     helix_pdv_coverage_observer,
     inventory_nonempty_per_instrument,
-    maxima_xrd_derived_provenance_valid,
     no_coord_transform_failures_helix_alpss,
-    no_coord_transform_failures_maxima_derived,
-    no_coord_transform_failures_maxima_raw,
+    no_coord_transform_failures_maxima,
     pdv_coverage_above_threshold,
 )
 from aimdl_coord_enrichment.coord_enrichment.provenance_tagging import (
@@ -43,13 +39,12 @@ from aimdl_coord_enrichment.coord_enrichment.provenance_tagging import (
 from aimdl_coord_enrichment.resources import GirderConnection, GirderCredentials
 from aimdl_coord_enrichment.schedules import (
     coord_enrichment_helix_alpss_weekly_schedule,
-    coord_enrichment_maxima_derived_weekly_schedule,
-    coord_enrichment_maxima_raw_weekly_schedule,
+    coord_enrichment_maxima_weekly_schedule,
     coord_enrichment_state_report_schedule,
 )
 from aimdl_coord_enrichment.sensors import (
     helix_experiment_log_discovery_sensor,
-    maxima_raw_discovery_sensor,
+    maxima_run_discovery_sensor,
 )
 
 
@@ -65,33 +60,32 @@ coord_enrichment_job = define_asset_job(
     ),
 )
 
-# NOTE: coord_enrichment_maxima_raw_job and
-# coord_enrichment_maxima_raw_partition_job select identical assets on
-# purpose. They are kept as two jobs so the sensor-driven and
-# schedule-driven launch paths produce separate, filterable run feeds in
-# the UI. The partition_key on each RunRequest — not the job identity —
-# decides what materializes, so this split is a convention for
+# NOTE: coord_enrichment_maxima_job and coord_enrichment_maxima_partition_job
+# select identical assets on purpose. They are kept as two jobs so the
+# sensor-driven and schedule-driven launch paths produce separate, filterable
+# run feeds in the UI. The partition_key on each RunRequest — not the job
+# identity — decides what materializes, so this split is a convention for
 # observability/intent, not a Dagster requirement.
 
 # Schedule target: weekly gap-filling reconciliation sweep. The weekly
-# schedule enumerates all registered partitions and emits a RunRequest
+# schedule enumerates all registered run partitions and emits a RunRequest
 # only for those lacking a successful materialization.
-coord_enrichment_maxima_raw_job = define_asset_job(
-    name="coord_enrichment_maxima_raw_job",
+coord_enrichment_maxima_job = define_asset_job(
+    name="coord_enrichment_maxima_job",
     selection=AssetSelection.assets(
         coord_transform_config_snapshot,
-        enriched_maxima_raw,
+        enriched_maxima_run,
     ),
 )
 
 # Sensor target: single-partition, event-driven discovery. The
-# maxima_raw_discovery_sensor emits one RunRequest per new/changed
-# AIMD-L partition, deduped on raw + xrd_metadata content hashes.
-coord_enrichment_maxima_raw_partition_job = define_asset_job(
-    name="coord_enrichment_maxima_raw_partition_job",
+# maxima_run_discovery_sensor emits one RunRequest per new/changed AIMD-L
+# run, deduped on per-data-type + xrd_metadata content hashes.
+coord_enrichment_maxima_partition_job = define_asset_job(
+    name="coord_enrichment_maxima_partition_job",
     selection=AssetSelection.assets(
         coord_transform_config_snapshot,
-        enriched_maxima_raw,
+        enriched_maxima_run,
     ),
 )
 
@@ -102,15 +96,6 @@ coord_enrichment_helix_alpss_job = define_asset_job(
         enrichable_items_inventory,
         helix_alpss_provenance_tagged,
         enriched_helix_alpss,
-    ),
-)
-
-coord_enrichment_maxima_derived_job = define_asset_job(
-    name="coord_enrichment_maxima_derived_job",
-    selection=AssetSelection.assets(
-        coord_transform_config_snapshot,
-        enrichable_items_inventory,
-        enriched_maxima_derived,
     ),
 )
 
@@ -125,12 +110,11 @@ defs = Definitions(
         coord_transform_config_snapshot,
         enrichable_items_inventory,
         helix_alpss_provenance_tagged,
-        enriched_maxima_raw,
+        enriched_maxima_run,
         coord_enrichment_report,
         coord_enrichment_manifest,
         # coord_enrichment (Phase 4)
         enriched_helix_alpss,
-        enriched_maxima_derived,
         helix_pdv_coverage_observer,
     ],
     asset_checks=[
@@ -145,33 +129,28 @@ defs = Definitions(
         # coord_enrichment (Phase 3)
         inventory_nonempty_per_instrument,
         all_helix_alpss_tagged,
-        enrichment_success_rate_maxima_raw,
-        no_coord_transform_failures_maxima_raw,
+        enrichment_success_rate_maxima,
+        no_coord_transform_failures_maxima,
         # coord_enrichment (Phase 4)
         enrichment_success_rate_helix_alpss,
         no_coord_transform_failures_helix_alpss,
-        enrichment_success_rate_maxima_derived,
-        no_coord_transform_failures_maxima_derived,
-        maxima_xrd_derived_provenance_valid,
         pdv_coverage_above_threshold,
     ],
     jobs=[
         process_helix_assets_job,
         coord_enrichment_job,
-        coord_enrichment_maxima_raw_job,
-        coord_enrichment_maxima_raw_partition_job,
+        coord_enrichment_maxima_job,
+        coord_enrichment_maxima_partition_job,
         coord_enrichment_helix_alpss_job,
-        coord_enrichment_maxima_derived_job,
     ],
     schedules=[
         coord_enrichment_state_report_schedule,
-        coord_enrichment_maxima_raw_weekly_schedule,
+        coord_enrichment_maxima_weekly_schedule,
         coord_enrichment_helix_alpss_weekly_schedule,
-        coord_enrichment_maxima_derived_weekly_schedule,
     ],
     sensors=[
         helix_experiment_log_discovery_sensor,
-        maxima_raw_discovery_sensor,
+        maxima_run_discovery_sensor,
     ],
     resources={
         "girder": GirderConnection(
