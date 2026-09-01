@@ -349,7 +349,17 @@ def test_shot_fired_only_on_the_positive_note():
     """Tested as a positive match so a new upstream skip string still reads as
     not-fired, rather than silently counting as a fired shot."""
     assert shot_fired(_row(pdv=float("nan"), notes="Laser triggered")) is True
-    assert shot_fired(_row(pdv=float("nan"), notes="Laser triggered!")) is False
+    assert shot_fired(_row(pdv=float("nan"), notes="Laser skipped")) is False
+
+
+def test_shot_fired_accepts_the_multi_channel_trailing_period():
+    """Multi-channel logs write "Laser triggered." with a period. Those logs are
+    out of scope today (untagged upstream), but exact equality would mark every
+    fired shot as not-fired -- enriching nothing while the checks pass, because
+    not-fired rows leave the success-rate denominator. Prefix match avoids that
+    trap ahead of time."""
+    assert shot_fired(_row(pdv=float("nan"), notes="Laser triggered.")) is True
+    assert shot_fired(_row(pdv=float("nan"), notes="Laser triggered")) is True
 
 
 def test_a_named_row_counts_as_fired_regardless_of_notes():

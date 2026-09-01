@@ -181,6 +181,27 @@ Job name `process_helix_assets_job` is preserved from the 9-asset design.
   `ambiguous` (no item chosen); given exactly 1 → matched. Blank/NaN filenames
   are skipped silently with no issue. *(`pdv_data`; tests: `test_exact_match`,
   `test_match_pdv_rows_match_and_not_found_and_nan`.)*
+- **SPEC‑HELIX‑04a — Channel-prefix fallback.** A PDV trace is stored under the
+  digitizer channel that recorded it, so its Girder name may carry a leading
+  `C<n>--` that the log's `PDV_FileName` omits. When and only when the exact
+  pass finds nothing, the system shall retry ignoring that prefix on the item
+  name. Exact match is tried first and wins outright, so the fallback cannot
+  change the outcome for a filename that already matched. The unique-match
+  requirement holds on both paths (INV‑5); a relaxed multi-match is reported
+  `ambiguous` with `via: "channel_prefix"`. Only `C<n>--` is stripped — an
+  arbitrary leading token is still `not_found`. *Measured 2026‑08‑31 across all
+  255 tagged logs: coverage of fired shots 48.8% → **81.1%** (3,270/4,033),
+  **0 ambiguities**. Tests: `test_matches_across_channel_prefix`,
+  `test_exact_prefix_match_wins_over_the_fallback`,
+  `test_two_channels_for_one_row_is_still_ambiguous`,
+  `test_only_a_channel_prefix_is_stripped`.*
+- **SPEC‑HELIX‑04b — Multi-channel logs are OUT OF SCOPE (2026‑08‑31).** Logs
+  from 2026‑08 onward record one column per probe (`PDV_<n>_FileName`) and no
+  bare `PDV_FileName`. `girder-consumers/helix-otherdata` gates its
+  `pdv_experiment_log` tagging on that bare column, so all 47 such logs are
+  untagged, absent from `/aimdl/partition`, and unreachable. Deferred as separate
+  work pending an upstream consumer fix; this capability covers the 258
+  single-channel tagged logs only.
 - **SPEC‑HELIX‑05 — IGSN consistency.** When a row matches an item and both carry
   a truthy IGSN that differ, the system shall record an `igsn_mismatch` issue
   (but still keep the match). *Tests: `test_match_pdv_rows_flags_igsn_mismatch`.*

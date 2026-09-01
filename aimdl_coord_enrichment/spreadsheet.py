@@ -99,6 +99,14 @@ def match_pdv_rows(df, pdv_items):
 # Laser_Target_Energy_mJ: 623 of the 1,506 skipped rows carry a non-zero value
 # (the intended energy, recorded before the decision), so energy misclassifies
 # 41% of them as fired.
+#
+# Matched as a PREFIX, not by equality: multi-channel logs write the same note
+# with a trailing period ("Laser triggered."). Those logs are out of scope today
+# because the upstream consumer never tags them (SPEC-HELIX-04b), but exact
+# equality would classify every one of their fired shots as not-fired --
+# enriching nothing while the checks pass, since not-fired rows are excluded
+# from the success-rate denominator. A silent failure on one character, so the
+# looser test is worth having in place before those logs ever arrive.
 FIRED_NOTE = "Laser triggered"
 
 
@@ -118,7 +126,7 @@ def shot_fired(row) -> bool:
     """
     if not _cell_is_blank(row.get("PDV_FileName")):
         return True
-    return str(row.get("Notes", "")).strip() == FIRED_NOTE
+    return str(row.get("Notes", "")).strip().startswith(FIRED_NOTE)
 
 
 def skip_reason(row) -> str:
