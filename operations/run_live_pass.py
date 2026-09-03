@@ -10,6 +10,10 @@ and nothing is written, which is the same rehearsal the readiness script does.
 
 See docs/runbooks/live_enrichment_pass.md.
 
+Reads ``.env`` from the repository root and defaults ``DAGSTER_HOME`` to
+``<repo>/.dagster_home``, so it needs no shell preamble. Values already in the
+environment win, so an explicit export still overrides the file.
+
 Usage:
     .venv/bin/python operations/run_live_pass.py --partitions KEY [KEY ...]
     .venv/bin/python operations/run_live_pass.py --all --live
@@ -22,12 +26,49 @@ import os
 import sys
 from datetime import datetime, timezone
 
-OPS = ["pdv_data", "pdv_processing_manifest"]
+# Per-flow wiring: the job, the ops that take a dry_run config, and the leaf
+# whose output carries the counters.
+FLOWS = {
+    "traces": {
+        "job": "process_helix_assets_job",
+        "ops": ["pdv_data", "pdv_processing_manifest"],
+        "leaf": "pdv_data",
+    },
+    "alpss": {
+        "job": "coord_enrichment_helix_alpss_job",
+        "ops": ["helix_alpss_provenance_tagged", "enriched_helix_alpss"],
+        "leaf": "enriched_helix_alpss",
+    },
+}
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def load_env():
+    """Populate the environment from the repo-root .env, without overriding it.
+
+    Keeps the invocation a single command so it can be matched by one
+    permission rule, rather than a compound shell line.
+    """
+    path = os.path.join(REPO_ROOT, ".env")
+    if os.path.exists(path):
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key, value = key.strip(), value.strip().strip('"').strip("'")
+                os.environ.setdefault(key, value)
+    os.environ.setdefault("DAGSTER_HOME", os.path.join(REPO_ROOT, ".dagster_home"))
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--flow", choices=sorted(FLOWS), default="traces",
+                    help="traces: enrich pdv_trace from the experiment logs. "
+                         "alpss: inherit those coordinates to the ALPSS "
+                         "derived files. Run alpss only after traces.")
     sel = ap.add_mutually_exclusive_group(required=True)
     sel.add_argument("--partitions", nargs="+", help="explicit partition keys")
     sel.add_argument("--all", action="store_true", help="every registered partition")
@@ -37,11 +78,10 @@ def main():
     ap.add_argument("--limit", type=int, default=None, help="cap the number of partitions")
     args = ap.parse_args()
 
+    load_env()
     for v in ("GIRDER_API_URL", "GIRDER_API_KEY", "COORD_TRANSFORMS_YAML"):
         if not os.environ.get(v):
             sys.exit(f"Missing required env var: {v}")
-    if not os.environ.get("DAGSTER_HOME"):
-        sys.exit("DAGSTER_HOME must be set so runs are recorded in the real instance.")
 
     import requests
     from dagster import DagsterInstance
@@ -62,13 +102,20 @@ def main():
         apiUrl=os.environ["GIRDER_API_URL"], apiKey=os.environ["GIRDER_API_KEY"],
         session=requests.Session(),
     )
-    index = fetch_partition_index(client, HELIX_TRACE_DATA_TYPE)
+    from aimdl_coord_enrichment.coord_enrichment import HELIX_ALPSS_PARTITIONS
+
+    if args.flow == "alpss":
+        index = {k: "" for k in HELIX_ALPSS_PARTITIONS.get_partition_keys()}
+        if args.month:
+            sys.exit("--month applies to the traces flow; ALPSS partitions are static.")
+    else:
+        index = fetch_partition_index(client, HELIX_TRACE_DATA_TYPE)
 
     if args.partitions:
         keys = list(args.partitions)
         unknown = [k for k in keys if k not in index]
         if unknown:
-            sys.exit("Not in the pdv_trace partition index: " + ", ".join(unknown))
+            sys.exit("Not a known partition: " + ", ".join(unknown))
     elif args.month:
         keys = sorted(k for k in index if k.split("//")[1].startswith(args.month))
     else:
@@ -79,18 +126,20 @@ def main():
         sys.exit("No partitions selected.")
 
     instance = DagsterInstance.get()
-    instance.add_dynamic_partitions(HELIX_TRACE_PARTITIONS.name, sorted(index))
+    if args.flow == "traces":
+        instance.add_dynamic_partitions(HELIX_TRACE_PARTITIONS.name, sorted(index))
 
+    flow = FLOWS[args.flow]
     mode = "LIVE — writing to Girder" if args.live else "dry run — no writes"
-    print(f"{mode}: {len(keys)} partition(s)", flush=True)
+    print(f"{mode}: flow={args.flow}, {len(keys)} partition(s)", flush=True)
     print(f"  girder   : {os.environ['GIRDER_API_URL']}", flush=True)
     print(f"  instance : {os.environ['DAGSTER_HOME']}", flush=True)
 
-    run_config = {"ops": {op: {"config": {"dry_run": not args.live}} for op in OPS}}
-    job = defs.resolve_job_def("process_helix_assets_job")
+    run_config = {"ops": {op: {"config": {"dry_run": not args.live}}
+                          for op in flow["ops"]}}
+    job = defs.resolve_job_def(flow["job"])
 
-    totals = {"traces": 0, "paired": 0, "enriched": 0, "simulated": 0,
-              "no_station_coords": 0, "shot_identity": 0, "write_errors": 0}
+    totals = {}
     failures, per_partition = [], []
 
     for i, pk in enumerate(keys, 1):
@@ -102,20 +151,43 @@ def main():
             failures.append(pk)
             print(f"  [{i}/{len(keys)}] {pk}  FAILED", flush=True)
             continue
-        out = result.output_for_node("pdv_data")
-        totals["traces"] += out["traces_in_partition"]
-        totals["paired"] += out["paired_count"]
-        totals["enriched"] += out["written_count"]
-        totals["simulated"] += out["simulated_count"]
-        totals["no_station_coords"] += out["no_station_coords"]
-        totals["shot_identity"] += out["paired_by_shot_identity"]
-        totals["write_errors"] += len(out["write_errors"])
-        per_partition.append({"partition": pk, **{k: out[k] for k in (
-            "traces_in_partition", "paired_count", "written_count",
-            "simulated_count", "no_station_coords", "paired_by_shot_identity")}})
-        print(f"  [{i}/{len(keys)}] {pk}  traces={out['traces_in_partition']} "
-              f"paired={out['paired_count']} enriched={out['written_count']} "
-              f"no_coords={out['no_station_coords']}", flush=True)
+        out = result.output_for_node(flow["leaf"])
+        if args.flow == "traces":
+            row = {
+                "partition": pk,
+                "seen": out["traces_in_partition"],
+                "in_scope": out["paired_count"],
+                "enriched": out["written_count"],
+                "simulated": out["simulated_count"],
+                "no_station_coords": out["no_station_coords"],
+                "shot_identity": out["paired_by_shot_identity"],
+                "write_errors": len(out["write_errors"]),
+            }
+        else:
+            counts = out["counts"]
+            excluded = out.get("excluded", {}) or {}
+            row = {
+                "partition": pk,
+                "seen": counts["seen"],
+                "in_scope": counts["seen"] - int(excluded.get("total", 0)),
+                "enriched": counts["written"],
+                "simulated": counts["simulated_dry_run"],
+                "skipped_no_change": counts["skipped_no_change"],
+                "excluded": int(excluded.get("total", 0)),
+                "excluded_by_reason": excluded.get("by_reason", {}),
+                "write_errors": len(out.get("write_errors", [])),
+            }
+        for k in ("seen", "in_scope", "enriched", "simulated",
+                  "no_station_coords", "shot_identity", "write_errors",
+                  "skipped_no_change", "excluded"):
+            if k in row:
+                totals[k] = totals.get(k, 0) + row[k]
+        per_partition.append(row)
+        extra = (f"no_coords={row['no_station_coords']}" if args.flow == "traces"
+                 else f"skipped={row['skipped_no_change']} excluded={row['excluded']}")
+        print(f"  [{i}/{len(keys)}] {pk}  seen={row['seen']} "
+              f"in_scope={row['in_scope']} enriched={row['enriched']} {extra}",
+              flush=True)
 
     print("\n=== totals ===", flush=True)
     for k, v in totals.items():

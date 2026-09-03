@@ -1,5 +1,9 @@
 # Live enrichment pass — HELIX
 
+> **Executed 2026-09-03.** 5,867 `pdv_trace` and 51,920 ALPSS items enriched,
+> zero write errors. The instructions below remain the procedure for re-running
+> after the upstream gaps close; the pass is idempotent.
+
 Step-by-step instructions for the first live coordinate write. Every command
 is given explicitly. Read §1 before starting.
 
