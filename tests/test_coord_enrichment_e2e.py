@@ -143,8 +143,8 @@ def _run_full_dag(xrd_items, xrf_items, girder_mock):
     """Run the full coord_enrichment DAG manually in dependency order."""
     instr_item = {"_id": "instr-abc", "name": "instructions.txt"}
 
-    # Inventory still feeds the provenance tagger (unchanged signature).
-    # The empty HELIX ALPSS partitions mean the tagger has nothing to do.
+    # The tagger fetches its own ALPSS items now; this dict is served through
+    # that fetch. Empty HELIX ALPSS lists mean it has nothing to do.
     inventory = {
         "HELIX/pdv_trace": [],
         "HELIX/pdv_alpss_output": [],
@@ -170,9 +170,12 @@ def _run_full_dag(xrd_items, xrf_items, girder_mock):
         with patch(
             "aimdl_coord_enrichment.coord_enrichment.provenance_tagging.fetch_all_aimdl_datafiles",
             return_value=[],
+        ), patch(
+            "aimdl_coord_enrichment.coord_enrichment.provenance_tagging.fetch_items_by_partition",
+            side_effect=lambda g, dt: inventory.get(f"HELIX/{dt}", []),
         ):
             tagging_result = helix_alpss_provenance_tagged(
-                tagging_ctx, config_live, inventory, girder_mock,
+                tagging_ctx, config_live, girder_mock,
             )
 
         fetch_mapping = {

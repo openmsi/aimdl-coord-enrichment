@@ -237,9 +237,13 @@ def _run_phase4_dag(girder_mock):
                 "aimdl_coord_enrichment.coord_enrichment.helix_alpss_leaf."
                 "transform_with_named_version",
                 side_effect=_mock_transform_any,
+            ), patch(
+                "aimdl_coord_enrichment.coord_enrichment.helix_alpss_leaf."
+                "fetch_items_by_partition",
+                side_effect=lambda g, dt: INVENTORY.get(f"HELIX/{dt}", []),
             ):
                 leaf_result = enriched_helix_alpss(
-                    ctx, config, INVENTORY, snap, girder_mock,
+                    ctx, config, snap, girder_mock,
                 )
                 alpss_results[pkey] = leaf_result
             _report_inheritance_leaf_event(

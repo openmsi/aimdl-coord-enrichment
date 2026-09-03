@@ -1,6 +1,6 @@
 """Tests for helix_alpss_provenance_tagged asset and check."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from dagster import AssetCheckSeverity, build_asset_context
@@ -32,8 +32,14 @@ def _empty_inventory():
     }
 
 
-def _run_asset(inventory, girder, *, dry_run=False, pdv_traces=None, monkeypatch=None):
-    """Helper to run helix_alpss_provenance_tagged with mocks."""
+def _run_asset(inventory, girder, *, dry_run=False, pdv_traces=None,
+               monkeypatch=None, patch_pdv=True):
+    """Helper to run helix_alpss_provenance_tagged with mocks.
+
+    The asset fetches each ALPSS data type itself now, so the inventory dict
+    the tests build is served through the per-partition fetch instead of being
+    passed in.
+    """
     if pdv_traces is not None and monkeypatch is not None:
         monkeypatch.setattr(
             "aimdl_coord_enrichment.coord_enrichment.provenance_tagging.fetch_all_aimdl_datafiles",
@@ -41,7 +47,24 @@ def _run_asset(inventory, girder, *, dry_run=False, pdv_traces=None, monkeypatch
         )
     config = CoordEnrichmentConfig(dry_run=dry_run)
     ctx = build_asset_context()
-    return helix_alpss_provenance_tagged(ctx, config, inventory, girder)
+    stack = [patch(
+        "aimdl_coord_enrichment.coord_enrichment.provenance_tagging.fetch_items_by_partition",
+        side_effect=lambda g, dt: inventory.get(f"HELIX/{dt}", []),
+    )]
+    # The parent lookup fetches pdv_trace directly. Serve it from the same
+    # inventory dict unless a test is patching that call itself.
+    if patch_pdv and not (pdv_traces is not None and monkeypatch is not None):
+        stack.append(patch(
+            "aimdl_coord_enrichment.coord_enrichment.provenance_tagging.fetch_all_aimdl_datafiles",
+            side_effect=lambda g, dt: inventory.get("HELIX/pdv_trace", []),
+        ))
+    for cm in stack:
+        cm.start()
+    try:
+        return helix_alpss_provenance_tagged(ctx, config, girder)
+    finally:
+        for cm in reversed(stack):
+            cm.stop()
 
 
 # --- Test 1: HELIX ALPSS missing prov gets written ---
@@ -186,7 +209,7 @@ def test_check_all_helix_alpss_tagged_errors_on_helix_unresolved():
 
 # --- Test 8: fetches pdv_trace when inventory lacks key ---
 
-def test_fetches_pdv_trace_when_inventory_lacks_key(monkeypatch):
+def test_fetches_pdv_trace_for_the_parent_lookup(monkeypatch):
     alpss = _make_alpss_item(
         "alpss1",
         "JHAMAC00003-S1R4C3_2026-02-18_18-45-56_shot01_ch1-iq.png",
@@ -197,7 +220,6 @@ def test_fetches_pdv_trace_when_inventory_lacks_key(monkeypatch):
     ]
     inv = _empty_inventory()
     inv["HELIX/pdv_alpss_output"] = [alpss]
-    # No HELIX/pdv_trace key — forces the fallback fetch
 
     fetch_calls = []
     def mock_fetch(girder, dt):
@@ -210,7 +232,7 @@ def test_fetches_pdv_trace_when_inventory_lacks_key(monkeypatch):
     )
 
     girder = MagicMock()
-    result = _run_asset(inv, girder, dry_run=False)
+    result = _run_asset(inv, girder, dry_run=False, patch_pdv=False)
 
     assert len(fetch_calls) == 1
     assert fetch_calls[0] == "pdv_trace"

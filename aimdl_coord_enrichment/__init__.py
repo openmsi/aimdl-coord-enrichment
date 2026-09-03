@@ -89,11 +89,14 @@ coord_enrichment_maxima_partition_job = define_asset_job(
     ),
 )
 
+# enrichable_items_inventory is deliberately NOT selected here. Both ALPSS
+# assets fetch their own items now; including the inventory would refetch every
+# in-scope data type — ~200k MAXIMA items neither of them reads — once per
+# partition run.
 coord_enrichment_helix_alpss_job = define_asset_job(
     name="coord_enrichment_helix_alpss_job",
     selection=AssetSelection.assets(
         coord_transform_config_snapshot,
-        enrichable_items_inventory,
         helix_alpss_provenance_tagged,
         enriched_helix_alpss,
     ),

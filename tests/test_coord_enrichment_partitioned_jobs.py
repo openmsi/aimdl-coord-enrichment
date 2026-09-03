@@ -17,9 +17,11 @@ MAXIMA_RAW_UNPARTITIONED_UPSTREAMS = {
     AssetKey("coord_transform_config_snapshot"),
 }
 
+# enrichable_items_inventory is deliberately absent: both ALPSS assets fetch
+# their own items per data type, so selecting the shared inventory would refetch
+# every in-scope data type once per partition run for nothing.
 HELIX_ALPSS_UNPARTITIONED_UPSTREAMS = {
     AssetKey("coord_transform_config_snapshot"),
-    AssetKey("enrichable_items_inventory"),
     AssetKey("helix_alpss_provenance_tagged"),
 }
 
@@ -63,6 +65,13 @@ def test_helix_alpss_job_includes_unpartitioned_upstreams():
         "coord_enrichment_helix_alpss_job missing upstreams: "
         f"{HELIX_ALPSS_UNPARTITIONED_UPSTREAMS - asset_keys}"
     )
+
+
+def test_helix_alpss_job_does_not_pull_the_shared_inventory():
+    """Selecting it would refetch every in-scope data type — ~200k MAXIMA items
+    neither ALPSS asset reads — on every partition run."""
+    job = REPO.get_job("coord_enrichment_helix_alpss_job")
+    assert AssetKey("enrichable_items_inventory") not in job.asset_layer.executable_asset_keys
 
 def test_original_coord_enrichment_job_unchanged():
     job = REPO.get_job("coord_enrichment_job")

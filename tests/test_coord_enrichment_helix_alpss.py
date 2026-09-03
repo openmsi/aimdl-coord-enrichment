@@ -104,9 +104,6 @@ def _run_asset(
     transform_fn=None,
 ):
     """Run enriched_helix_alpss with full mocking."""
-    inventory = _empty_inventory()
-    inventory[partition_key] = items
-
     girder = MagicMock()
     parent_item = parent or _parent()
     girder.get.return_value = parent_item
@@ -120,8 +117,11 @@ def _run_asset(
     with patch(
         "aimdl_coord_enrichment.coord_enrichment.helix_alpss_leaf.transform_with_named_version",
         side_effect=tfn,
+    ), patch(
+        "aimdl_coord_enrichment.coord_enrichment.helix_alpss_leaf.fetch_items_by_partition",
+        return_value=items,
     ):
-        result = enriched_helix_alpss(ctx, config, inventory, snap, girder)
+        result = enriched_helix_alpss(ctx, config, snap, girder)
 
     return result, girder
 
@@ -248,13 +248,10 @@ def test_alpss_overwrites_when_yaml_sha_differs():
     assert result["counts"]["written"] == 1
 
 
-def test_alpss_partition_filters_items():
+def test_alpss_fetches_only_its_own_data_type():
+    """The partition names the data type, and only that one is fetched — the
+    asset must not pull the other ALPSS types, let alone the MAXIMA ones."""
     output_item = _alpss_item("out1", data_type="pdv_alpss_output")
-    result_item = _alpss_item("res1", data_type="pdv_alpss_result")
-
-    inventory = _empty_inventory()
-    inventory["HELIX/pdv_alpss_output"] = [output_item]
-    inventory["HELIX/pdv_alpss_result"] = [result_item]
 
     girder = MagicMock()
     girder.get.return_value = _parent()
@@ -265,14 +262,29 @@ def test_alpss_partition_filters_items():
     with patch(
         "aimdl_coord_enrichment.coord_enrichment.helix_alpss_leaf.transform_with_named_version",
         return_value=(32.0, 8.0),
-    ):
-        result = enriched_helix_alpss(ctx, config, inventory, snap, girder)
+    ), patch(
+        "aimdl_coord_enrichment.coord_enrichment.helix_alpss_leaf.fetch_items_by_partition",
+        return_value=[output_item],
+    ) as fetch:
+        result = enriched_helix_alpss(ctx, config, snap, girder)
 
+    fetch.assert_called_once()
+    assert fetch.call_args[0][1] == "pdv_alpss_output"
     assert result["counts"]["seen"] == 1
     assert result["partition_key"] == "HELIX/pdv_alpss_output"
     girder.addMetadataToItem.assert_called_once()
-    written_id = girder.addMetadataToItem.call_args[0][0]
-    assert written_id == "out1"
+    assert girder.addMetadataToItem.call_args[0][0] == "out1"
+
+
+def test_alpss_skips_items_with_no_igsn():
+    """Unannotated items are out of scope by construction everywhere else; the
+    per-partition fetch must apply the same gate."""
+    keep = _alpss_item("keep")
+    drop = {"_id": "drop", "name": "x.png", "meta": {"data_type": "pdv_alpss_output"}}
+    result, girder = _run_asset([keep, drop], dry_run=False)
+    assert result["counts"]["seen"] == 1
+    girder.addMetadataToItem.assert_called_once()
+    assert girder.addMetadataToItem.call_args[0][0] == "keep"
 
 
 @pytest.mark.parametrize("partition_key", ALL_PARTITIONS)

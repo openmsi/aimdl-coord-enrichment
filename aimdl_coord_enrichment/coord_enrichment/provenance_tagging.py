@@ -20,7 +20,10 @@ from dagster import (
 )
 
 from aimdl_coord_enrichment.coord_enrichment.config import CoordEnrichmentConfig
-from aimdl_coord_enrichment.girder_io import fetch_all_aimdl_datafiles
+from aimdl_coord_enrichment.girder_io import (
+    fetch_all_aimdl_datafiles,
+    fetch_items_by_partition,
+)
 from aimdl_coord_enrichment.instruments import (
     HELIX_DERIVED_DATA_TYPES,
     INSTRUMENT_HELIX,
@@ -112,27 +115,32 @@ def _apply_decision(
 def helix_alpss_provenance_tagged(
     context: AssetExecutionContext,
     config: CoordEnrichmentConfig,
-    enrichable_items_inventory: dict[str, list[dict[str, Any]]],
     girder: GirderConnection,
 ) -> dict[str, Any]:
     """Tag prov.wasDerivedFrom on HELIX ALPSS derived items.
+
+    Fetches the ALPSS items per data type rather than consuming the shared
+    inventory, which reaches these types through /aimdl/datafiles and strips
+    meta to data_type and igsn. Without the stored prov visible, every item
+    looked untagged and was rewritten on every run; with full meta, items
+    already pointing at the right parent are recognized as already_correct.
+
+    The parent lookup still uses /aimdl/datafiles for pdv_trace: it needs only
+    the name-to-id mapping, which survives the projection.
 
     Returns a structured result with per-partition counts, the set
     of items that remained unresolved, and a list of all write
     operations that were either performed (live) or simulated
     (dry_run).
     """
-    pdv_key = f"{INSTRUMENT_HELIX}/pdv_trace"
-    pdv_inventory = enrichable_items_inventory.get(pdv_key, [])
-    if not pdv_inventory:
-        pdv_inventory = [
-            it for it in fetch_all_aimdl_datafiles(girder, "pdv_trace")
-            if (it.get("meta") or {}).get("igsn")
-        ]
-        context.log.info(
-            "Fetched %d pdv_trace items for HELIX ALPSS parent lookup.",
-            len(pdv_inventory),
-        )
+    pdv_inventory = [
+        it for it in fetch_all_aimdl_datafiles(girder, "pdv_trace")
+        if (it.get("meta") or {}).get("igsn")
+    ]
+    context.log.info(
+        "Fetched %d pdv_trace items for HELIX ALPSS parent lookup.",
+        len(pdv_inventory),
+    )
 
     counters: dict[str, dict[str, int]] = {}
     unresolved: list[dict[str, str]] = []
@@ -140,7 +148,10 @@ def helix_alpss_provenance_tagged(
 
     for dt in sorted(HELIX_DERIVED_DATA_TYPES):
         partition_key = f"{INSTRUMENT_HELIX}/{dt}"
-        items = enrichable_items_inventory.get(partition_key, [])
+        items = [
+            it for it in fetch_items_by_partition(girder, dt)
+            if (it.get("meta") or {}).get("igsn")
+        ]
         c = counters.setdefault(
             partition_key,
             {"already_correct": 0, "written": 0, "overwritten": 0,

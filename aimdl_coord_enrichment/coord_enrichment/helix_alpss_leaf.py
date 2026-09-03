@@ -39,6 +39,7 @@ from aimdl_coord_enrichment.coordinates import transform_with_named_version
 from aimdl_coord_enrichment.instruments import INSTRUMENT_HELIX
 from aimdl_coord_enrichment.instruments.types import ResolutionError
 from aimdl_coord_enrichment.provenance import build_coord_provenance
+from aimdl_coord_enrichment.girder_io import fetch_items_by_partition
 from aimdl_coord_enrichment.resources import GirderConnection
 
 
@@ -59,13 +60,29 @@ HELIX_ALPSS_PARTITIONS = StaticPartitionsDefinition(
 def enriched_helix_alpss(
     context: AssetExecutionContext,
     config: CoordEnrichmentConfig,
-    enrichable_items_inventory: dict[str, list[dict[str, Any]]],
     coord_transform_config_snapshot,
     girder: GirderConnection,
 ) -> dict[str, Any]:
-    """Enrich HELIX ALPSS items by inheriting coords from their parent PDV trace."""
+    """Enrich HELIX ALPSS items by inheriting coords from their parent PDV trace.
+
+    Fetches this partition's own items rather than consuming the shared
+    inventory. Two reasons:
+
+    - Cost. The shared inventory fetches every in-scope data type, so enriching
+      one ALPSS partition pulled ~200k MAXIMA items it never looks at, once per
+      partition. This fetches one data type.
+    - Correctness. The inventory reaches ALPSS types through /aimdl/datafiles,
+      which strips meta to data_type and igsn. With no stored coord_provenance
+      visible, should_write always said yes and skipped_no_change could never
+      fire, so every re-run rewrote every item. The partition endpoint returns
+      full meta, so unchanged items are now genuinely skipped.
+    """
     partition_key = context.partition_key
-    items = enrichable_items_inventory.get(partition_key, [])
+    data_type = partition_key.split("/", 1)[1]
+    items = [
+        it for it in fetch_items_by_partition(girder, data_type)
+        if (it.get("meta") or {}).get("igsn")
+    ]
     context.log.info(
         "enriched_helix_alpss partition %s: %d items to consider",
         partition_key, len(items),
