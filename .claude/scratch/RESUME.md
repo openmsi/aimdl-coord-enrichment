@@ -1,67 +1,138 @@
-# RESUME — current frontier (2026-05-17, post-merge)
+# RESUME — current state (2026-09-01)
 
-**Read this first.** Auto-memory (`MEMORY.md`) routes here. This is
-the chained index; per-step detail is in the linked runbooks.
+## In one line
 
-## State in one line
-issue23 work is **MERGED to `main`** (merge commit `c1400c4`).
-Active step is now the **package rename**. Suite **hermetic
-(311/1/0, env-independent)**. Girder (`data.htmdec.org`) **UP**.
+The HELIX flow is **trace-driven**: it iterates PDV traces and finds each one's
+log row. Full 290-partition dry sweep is green apart from the upstream log-tagging
+gap. Suite 361 passed / 1 skipped. **No coordinate has ever been written to
+Girder** — every run so far has been `dry_run=True`.
 
-## The chain
+Uncommitted; nothing staged or pushed.
 
-### 1. Merge issue23 → main  ✅ DONE 2026-05-17
-- Runbook `.claude/scratch/merge_issue23.md` — COMPLETE.
-- **Incident (recovered):** the original PR **#24** had base
-  `refactor/asset-dag` (WRONG) and was merged there → commit
-  `d1a505d` on `refactor/asset-dag`. `main` was untouched; nothing
-  lost. Recovered via a NEW PR **#26** (base **asserted == main**)
-  → real 2-parent merge commit **`c1400c4`** on `origin/main`,
-  curated basis-of-acceptance message in the commit body.
-- Post-merge gate 311/1/0; schedules STOPPED. Rollback if ever
-  needed: `git reset --hard pre-issue23-merge` (tag @ `04075df`).
-- Do NOT be confused by PR #24 / `refactor/asset-dag` — it is the
-  superseded wrong-base merge. The canonical merge is `c1400c4`.
+## 1. How the HELIX flow works
 
-### 2. Rename pkg `helix_dagster` → `aimdl_coord_enrichment`  ▶ ACTIVE
-- Runbook: **`.claude/scratch/rename_plan.md`** (6 phases, each a
-  git checkpoint + safe-to-/clear). Map:
-  **`.claude/scratch/rename_blast_radius.md`**.
-- **Phase 1: branch off FRESH main** (not the issue23 branch):
-  `git fetch origin && git checkout -b refactor/rename-aimdl-coord-enrichment origin/main`.
-- Rename-IN-PLACE (GitHub repo rename later; NOT a new repo).
-- Guardrail: exact-token `helix_dagster` only — never touch
-  Tier-0 instrument-domain `HELIX`/`helix`.
+The **trace is the unit of work**. Every PDV trace in Girder carries
+`meta.igsn`; `/aimdl/partition?dataType=pdv_trace` supplies its experiment date.
+Together they give the AIMD-L key `<igsn>//<experiment_date>`, which resolves in
+the *same key space* to the experiment log holding the row with that shot's
+flyer position.
 
-### 3. Production bootstrap (the real scientific goal)
-- Detail: memory **`bootstrap-step1-blocked.md`** (its "Girder
-  down" status is STALE — server is up).
-- Remaining blocker: prod HELIX spreadsheet folder.
-  `HELIX_FOLDER_ID=69e3815e…` resolves to a TEST fixture
-  (`coordinate_dag_test_data`, 0 spreadsheets). Need the real prod
-  folder from the user, or confirm scope.
-- `process_helix_assets_job` has **NO dry-run** — safe preview =
-  partial-materialize the read-only chain, stop before
-  `enriched_pdv_metadata`. Probe: `probe_step1_blast_radius.py`.
+```
+pdv_trace partition  ──>  same key  ──>  pdv_experiment_log item(s)
+   (the work)                              (the coordinates)
+        └── pair by filename within the partition ──> write Station/Sample X/Y
+```
 
-## Known downstream caveat (NOT a blocker for step 2)
-HELIX/ALPSS coord sweep will **ERROR every run**: ~9,000 `C1--…`
-PDV files mis-tagged `data_type=pdv_alpss_*` trip the
-ERROR-severity `all_helix_alpss_tagged` check. Independent of the
-bootstrap. Detail + fix options (A/B/C): committed
-**`.claude/scratch/probe_helix_alpss.md`**.
+Two properties are structural, not enforced by a check:
 
-## Git / env
-- `main` = `c1400c4` (issue23 work merged). Branch
-  `refactor/issue23-dynamic-partitions` == origin @ `31be701`
-  (its content is now also on main via the merge).
-- For step 2: branch the rename off **fresh `origin/main`**.
-- `.env.local` untracked + gitignored, rotated key. Suite is
-  hermetic (no env needed) via `tests/fixtures/coord_transforms_fixture.yaml`.
-- Run env: `.venv` (Python 3.12, NOT miniconda),
-  `DAGSTER_HOME=/home/elbert/.dagster_home_helix`.
-- Ignore junk: `.claude/scratch/out` (5 MB stale).
+- A trace can only take coordinates from a row describing **its own sample**,
+  because matching is scoped to the trace's own partition.
+- A log row naming a file that was never ingested is a **non-event**. Girder is
+  the only place the data exists.
 
-## First action for the next session
-Read this → open `.claude/scratch/rename_plan.md` → Phase 0
-(pre-flight) → Phase 1 (branch off fresh `origin/main`).
+Traces without `meta.igsn` never appear in the index, so unannotated files are
+out of scope by construction.
+
+**Pairing** (`matching.py`): normalize the row's `PDV_FileName` with
+`ntpath.basename` — some logs record the station-local Windows path the file
+was written to before ingest, and only the trailing component names anything in
+Girder. Then find the single row whose stem prefixes the trace name, retrying
+with a leading `C<n>--` digitizer prefix stripped if the exact pass finds
+nothing. Exactly one row → paired. Zero → `no_row_in_log`. More than one →
+`ambiguous_row`, and **nothing is chosen** — two rows claiming one trace means
+the partition holds contradictory logs, and guessing would apply the wrong
+shot's coordinates. A row whose IGSN disagrees with the trace is refused as
+`igsn_mismatch`.
+
+| flow | partitioning | file → coordinate |
+|---|---|---|
+| `process_helix_assets_job` | dynamic `helix_pdv_trace`, `<igsn>//<experiment_date>` | trace → its row in that session's log |
+| `coord_enrichment_helix_alpss_job` | 3 static ALPSS data types | filename stem → parent trace, inherit |
+| `coord_enrichment_maxima_job` | dynamic `maxima_run` | `scan_point_<i>` → `instructions.txt` → `scan_points[i]` |
+
+Each enriched item gets `Station_X/Y`, `Sample_X/Y`, `coord_provenance`.
+Re-runs rewrite only when a meaningful provenance field changed.
+
+## 2. Measured — full dry sweep, 2026-09-01
+
+290 partitions, 0 job failures, 0 writes.
+
+**Of the traces whose session has a tagged experiment log: 3,695 of 4,006
+(92.2%) paired and produced coordinates.** Residual 254 `no_row_in_log`, 57
+`ambiguous_row`. Transform versions `HELIX/v1` 965, `HELIX/v2` 2,730. Coord
+failures 0.
+
+Every ERROR check passes on all 290 partitions — `zero_traces_in_partition`,
+`igsn_consistency`, `manifest_written` — as do `igsn_validity_rate`,
+`coord_transform_check`, and `enrichment_success_rate`.
+
+## 3. Scope — what is deliberately not counted
+
+Only what the `/aimdl/*` endpoints return is in scope. Traces without
+`meta.igsn` never appear there: attempted shots that never triggered the laser,
+test shots (`TEST00_000…`), and shots on samples with no registered IGSN. They
+can never carry meaningful coordinates. **Do not count, reconcile, or report
+them** — the endpoints have already filtered them, deliberately.
+
+Verified 2026-09-01: multipoint traces are tagged correctly upstream — all
+three channels of a real shot are indexed together. There is no consumer defect
+on the trace side.
+
+One upstream dependency does remain, and it is the only one: partitions whose
+experiment *log* is untagged have no rows to pair against, because
+`helix-otherdata` gates `pdv_experiment_log` tagging on a literal
+`PDV_FileName` column that multi-channel logs lack. Those partitions pass with
+`log_items: 0`. After the upstream fix, `COLUMN_MAP` / `row_filename_stems`
+must read every `PDV_<n>_FileName` and dedupe by filename.
+
+## 4. Next steps
+
+1. **Close the residual 311** — 254 traces that find no row in a tagged log,
+   57 refused as `ambiguous_row` (contradictory logs; see
+   `docs/upstream_issues/helix-03-duplicate-overlapping-experiment-logs.md`).
+   This is the remaining gap between 92.2% and complete.
+2. **MAXIMA has 0 `maxima_run` partitions registered.** Test-evaluate
+   `maxima_run_discovery_sensor` (leave it **STOPPED** — running it submits up
+   to 1,664 RunRequests). MAXIMA has never been dry-run at corpus scale.
+3. **Draft the upstream issue** for the `PDV_FileName` log-tagging gate.
+4. **Then the live sweep** — order **HELIX traces → HELIX ALPSS → MAXIMA**
+   (MAXIMA is independent). Start with 1–2 partitions and verify in Girder
+   before widening.
+
+## 5. Running it
+
+```bash
+set -a; . ./.env; set +a
+.venv/bin/python operations/dry_run_readiness.py --flows helix_traces   # ~35 min, 290 partitions
+.venv/bin/python operations/dry_run_readiness.py                        # all flows; hours
+```
+Uses an **ephemeral** Dagster instance — does not touch `.dagster_home` or a
+running `dagster dev`. Writes `operations/log/readiness_dry_run_<ts>.{md,json}`.
+Exit 0 = GO, 1 = NO-GO. `--sample N` bounds only the dynamic flows;
+`helix_alpss` is 3 static partitions over 66,848 items and is the long pole.
+
+UI: `docs/runbooks/coord_enrichment_production_sweep.md`.
+
+## 6. Gotchas
+
+- **`.dagster_home` is git-tracked.** `git checkout` / `reset --hard` silently
+  rewinds registered partitions and run history. Its stored `pdv_data`
+  materializations are from the **old log-driven code** under the retired
+  `helix_experiment_log` dim — ignore them; the dim is now `helix_pdv_trace`.
+- **Stage commits with explicit file paths.** `docs/Untitled.ipynb`,
+  `Untitled.ipynb`, `docs/upstream_issues/*` must stay untracked.
+- **`.env` key is `elbert`, `admin: True`** — full write. The readiness runbook
+  recommends a read-only key for dry runs; none is wired.
+- `COORD_ENRICHMENT_MANIFEST_ITEM=6a95e8ad5c70f7e46fdcfbcd`
+  (`coord_enrichment_status.json`, verified reachable, `meta` empty).
+- **ALPSS ordering is load-bearing and fails silently.** Run it before the
+  traces are enriched and every item classifies `parent_not_enriched`, drops
+  from the denominator, and the checks go green having done nothing. Read
+  `in_scope`, not colours.
+
+## 7. Upstream issue drafts (untracked, `docs/upstream_issues/`)
+
+- `girder-consumers-01-calibrant-tagging.md`
+- `girder-consumers-02-duplicate-suffix-filenames.md`
+- `helix-03-duplicate-overlapping-experiment-logs.md`
+- **Not yet drafted:** the `PDV_FileName` tagging gate (§3).

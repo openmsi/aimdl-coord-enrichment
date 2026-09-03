@@ -78,23 +78,24 @@ spreadsheets appear in the HELIX folder.
 
 ### Prerequisite: IGSN tagging
 
-The `pdv_log` asset partitions on `pdv_experiment_log` via the
-`/aimdl/partition` Girder endpoint, and `pdv_data` fetches the PDV trace
-inventory via `/aimdl/datafiles`. Both require `meta.igsn` and
-`meta.data_type` to be set on items. Until these metadata fields are tagged
-on experiment-log and PDV files in Girder, the flow is inert / returns
-incomplete results. The `zero_pdv_inventory` asset check will flag an empty
-PDV inventory as an ERROR in the Dagster UI.
+The HELIX flow partitions on `pdv_trace` via the `/aimdl/partition` Girder
+endpoint and looks up each partition's experiment log in the same key space.
+Both require `meta.igsn` and `meta.data_type` on the items. A trace without
+`meta.igsn` never appears in the index, so unannotated files are out of scope
+by construction rather than by a filter. A session whose *log* was never
+tagged still forms a partition — its traces simply pair nothing, which
+`pdv_match_rate` reports as an upstream gap.
 
 --
 
 ## Job-by-job details
 
 ### 1. `process_helix_assets_job` — HELIX spreadsheet flow
-- **Trigger:** `helix_experiment_log_discovery_sensor` (polls `/aimdl/partition` for `pdv_experiment_log`, registers partitions, emits one partitioned RunRequest per changed log).
-- **Partitioning:** `HELIX_EXPERIMENT_LOG_PARTITIONS` = `DynamicPartitionsDefinition("helix_experiment_log")`, keyed on the AIMD-L logical key `<igsn>//<experiment_date>`.
-- **What it does:** Three durable partitioned assets — `pdv_log` (read + normalize + validate the experiment log for the partition), `pdv_data` (fetch the PDV trace inventory, match rows by filename, **write coordinate metadata to `pdv_trace` items**), and `pdv_processing_manifest` (stamp `meta.processing_status` back onto each source log item).
-- **Coordinate source:** each spreadsheet row's `Flyer_X/Y_Position_Corrected (mm)` becomes `Station_X/Y`; the row `Timestamp` selects the HELIX transform version.
+- **Trigger:** `helix_trace_discovery_sensor` (polls `/aimdl/partition` for `pdv_trace`, registers partitions, emits one partitioned RunRequest per changed session).
+- **Partitioning:** `HELIX_TRACE_PARTITIONS` = `DynamicPartitionsDefinition("helix_pdv_trace")`, keyed on the AIMD-L logical key `<igsn>//<experiment_date>` of the PDV **traces**.
+- **What it does:** The trace is the unit of work. Three durable partitioned assets — `pdv_log` (read + normalize + validate the experiment log(s) for that same key), `pdv_data` (fetch the partition's traces, pair each with the log row naming it, **write coordinate metadata to `pdv_trace` items**), and `pdv_processing_manifest` (stamp `meta.processing_status` back onto each source log item).
+- **Why trace-driven:** a trace carries its own `meta.igsn`, so matching scoped to its partition can only ever apply a row describing the *same sample*; cross-sample contamination is impossible by construction. A log row naming a file that was never ingested into Girder is a non-event rather than a reported gap.
+- **Coordinate source:** the paired row's `Flyer_X/Y_Position_Corrected (mm)` becomes `Station_X/Y`; the row `Timestamp` selects the HELIX transform version.
 - **Writing asset:** `pdv_data` → `pdv_trace`.
 - **Dry run:** `pdv_data` and `pdv_processing_manifest` take a `dry_run` config (`HelixSpreadsheetConfig`, **default `True`**). When dry, all reads/matching/transforms run but the Girder writes are simulated — checks count the would-be writes so a rehearsal reads as a live run. Set `dry_run: false` on both assets in the launchpad for a live sweep. (Because the default is safe, even an accidentally-enabled sensor run writes nothing.)
 
@@ -154,10 +155,10 @@ pass/warn/fail indicators in the Dagster UI:
 | Check | Asset | Severity | Triggers when |
 |---|---|---|---|
 | `igsn_validity_rate` | `pdv_log` | WARN | <80% of rows have valid IGSNs |
-| `zero_pdv_inventory` | `pdv_data` | ERROR | PDV trace inventory returned 0 items |
-| `pdv_match_rate` | `pdv_data` | WARN | <50% of PDV filenames matched |
-| `igsn_consistency` | `pdv_data` | ERROR | IGSN mismatch between spreadsheet and Girder |
-| `enrichment_success_rate` | `pdv_data` | WARN | <90% of matched items enriched |
+| `zero_traces_in_partition` | `pdv_data` | ERROR | Partition resolved 0 PDV traces |
+| `pdv_match_rate` | `pdv_data` | WARN | <50% of the partition's traces paired to a log row, or no tagged log |
+| `igsn_consistency` | `pdv_data` | ERROR | A trace paired a row declaring a different sample (pair refused) |
+| `enrichment_success_rate` | `pdv_data` | WARN | <90% of paired traces enriched |
 | `coord_transform_check` | `pdv_data` | WARN | Any coordinate transform failures |
 | `manifest_written` | `pdv_processing_manifest` | ERROR | Processing manifest write failed for any source item |
 
@@ -173,13 +174,14 @@ After each run, the `pdv_processing_manifest` asset writes
   "pipeline_version": "0.2.0",
   "total_rows": 45,
   "rows_valid_igsn": 42,
-  "rows_matched_pdv": 40,
-  "rows_enriched": 38,
+  "traces_in_partition": 42,
+  "traces_paired": 40,
+  "traces_enriched": 38,
   "issues_summary": {
     "igsn_invalid": 1,
     "igsn_missing": 2,
-    "pdv_not_found": 5,
-    "pdv_ambiguous": 0,
+    "trace_no_row": 2,
+    "trace_ambiguous_row": 0,
     "igsn_mismatch": 0,
     "write_errors": 0,
     "coord_failures": 0
@@ -192,12 +194,12 @@ sensor to skip already-processed spreadsheets.
 
 ### Sensor
 
-The `helix_experiment_log_discovery_sensor` polls `/aimdl/partition` for
-`pdv_experiment_log` items, registers each AIMD-L key
-(`<igsn>//<experiment_date>`) on the `helix_experiment_log` dynamic
+The `helix_trace_discovery_sensor` polls `/aimdl/partition` for
+`pdv_trace` items, registers each AIMD-L key
+(`<igsn>//<experiment_date>`) on the `helix_pdv_trace` dynamic
 partition dimension, and emits one partitioned RunRequest per key. The
-run_key embeds the partition's content hash, so unchanged logs are
-suppressed and a changed log re-triggers. Ships **STOPPED**.
+run_key embeds the partition's content hash, so unchanged sessions are
+suppressed and newly ingested traces re-trigger. Ships **STOPPED**.
 
 ## Setup
 

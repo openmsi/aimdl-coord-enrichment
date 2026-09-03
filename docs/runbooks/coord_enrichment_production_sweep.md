@@ -11,6 +11,43 @@ operator-initiated sweeps. Scheduled sweeps ship `dry_run=True`
 by default; a live sweep is a one-shot action by an operator
 who has read and understood this document.
 
+**Also not in scope:** the 47 multi-channel HELIX experiment logs.
+They carry `PDV_<n>_FileName` columns rather than a bare
+`PDV_FileName`, so the `girder-consumers/helix-otherdata` tagger never
+gives them `meta.data_type` and they never appear in
+`/aimdl/partition`. They are invisible to this sweep and need an
+upstream consumer fix first. This sweep covers the 258 tagged
+single-channel logs plus all of MAXIMA.
+
+## The three flows
+
+| Flow | Job | Partitioning | Writes to |
+|---|---|---|---|
+| HELIX logs | `process_helix_assets_job` | dynamic `helix_experiment_log`, one key per `<igsn>//<experiment_date>` | `pdv_trace` items |
+| HELIX ALPSS | `coord_enrichment_helix_alpss_job` | 3 static `HELIX/pdv_alpss_*` partitions | ALPSS items, by inheritance from the parent trace |
+| MAXIMA | `coord_enrichment_maxima_job` | dynamic `maxima_run`, one key per AIMD-L run | `xrd_raw`, `xrf_raw`, `xrd_derived`, `xrd_visualization` |
+
+## Reading results under the exclusion policy
+
+Items the pipeline cannot enrich for a structural reason — no
+`instructions.txt` in the run, an unparseable filename, a scan point out
+of range, a parent that is not yet enriched — are **classified,
+counted, and removed from the success-rate denominator**. They are not
+errors. See `aimdl_coord_enrichment/coord_enrichment/exclusions.py` for
+the reason vocabulary.
+
+The consequence for an operator: **a green check does not by itself mean
+work happened.** A partition that excluded everything it saw still
+passes `enrichment_success_rate_*`. Read the `in_scope` and
+`excluded_by_reason` output metadata on every leaf, not the check
+colours alone. `operations/dry_run_readiness.py` blocks GO on a leaf
+that saw items but has `in_scope == 0`, for exactly this reason.
+
+Similarly, HELIX logs row every *candidate* shot; the station decides at
+fire time. Shots that never fired are reported under
+`shots_not_fired` / `not_fired_by_reason` and are **not** counted as
+coverage gaps.
+
 ## Pre-flight
 
 1. **Env vars set in the Dagster deployment's environment:**
@@ -21,7 +58,9 @@ who has read and understood this document.
      YAML the deployment should use
    - `COORD_ENRICHMENT_MANIFEST_ITEM` — Girder item id that
      will receive `meta.coord_enrichment_status`; create this
-     item first if it doesn't exist
+     item first if it doesn't exist. Must be a bare item id, not a
+     URL, and must be a real Mongo item — virtual `wtlocal:` items
+     under `Home` reject metadata writes.
    - `HELIX_FOLDER_ID` — unchanged from the existing DAG
 2. **Target Girder item exists** for the manifest. If not:
    ```
@@ -37,6 +76,13 @@ who has read and understood this document.
    dagster dev
    ```
    and visually inspect that all five jobs are listed.
+5. **Dynamic partitions are registered.** Both dynamic dims are
+   populated by their discovery sensor. Register them without
+   submitting runs by using each sensor's **Test / single-evaluation**
+   button and **leaving the sensor STOPPED** — a *running* sensor also
+   submits its RunRequests, up to 1,664 for MAXIMA.
+   - `helix_trace_discovery_sensor` → `helix_pdv_trace`
+   - `maxima_run_discovery_sensor` → `maxima_run`
 
 ## Dry-run rehearsal
 
@@ -45,62 +91,52 @@ who has read and understood this document.
 > [`readiness_dry_run.md`](readiness_dry_run.md). The rehearsal below is
 > the lighter-weight single-partition smoke check.
 
-Run once with `dry_run=True` (the default).
+Run each flow once with `dry_run=True` (the default). One partition per
+flow is enough; you do not need to sweep every run during dry-run
+verification.
 
-**MAXIMA raw** is now partitioned on
-`MultiPartitionsDefinition({data_type, run})` where `data_type` ∈
-`{xrd_raw, xrf_raw}` and `run` is dynamic, keyed on the AIMD-L
-partition string `"<igsn>//<experiment_date>"`. Partition keys are
-populated by `maxima_raw_discovery_sensor` (STOPPED by default). To
-materialize by hand from the Dagster UI, launch
-`coord_enrichment_maxima_raw_partition_job` with a
-`MultiPartitionKey({"data_type": "<dt>", "run": "<igsn>//<experiment_date>"})`.
-Pick one `(data_type, run)` for rehearsal; you do not need to
-sweep every run during dry-run verification.
-
-Then dry-run the HELIX and MAXIMA-derived jobs, which still use
-static partitions:
-
-- `coord_enrichment_helix_alpss_job` — each of three ALPSS partitions
-  (`HELIX/pdv_alpss_output`, `HELIX/pdv_alpss_result`,
-  `HELIX/pdv_alpss_results`)
-- `coord_enrichment_maxima_derived_job` / `MAXIMA/xrd_derived`
+- `process_helix_assets_job` — pick one `<igsn>//<experiment_date>` key
+- `coord_enrichment_helix_alpss_job` — one of the three ALPSS partitions
+- `coord_enrichment_maxima_partition_job` — pick one `maxima_run` key
+  (a plain string; the multi-dimensional `(data_type, run)` key of the
+  issue-23 era is gone)
 
 Verify every run:
 
 - Ended green in the Dagster UI
 - The relevant `enrichment_success_rate_*` check passed
-- No `_coord_transform_failures_*` fired
-- For `enriched_maxima_derived`, `maxima_xrd_derived_provenance_valid`
-  (ERROR severity) passed
-- The asset output shows `simulated_dry_run` count > 0 and
-  `written == 0`
+- No `no_coord_transform_failures_*` / `coord_transform_check` fired
+- The asset output shows `written == 0` and either
+  `simulated_dry_run > 0` (coord_enrichment leaves) or
+  `items_simulated > 0` (`pdv_data`)
+- `in_scope > 0`, and the `excluded_by_reason` breakdown is one you
+  can explain
 
-If any run shows resolution errors or unexpected skips, stop.
-Investigate, fix, and re-run the dry rehearsal before
-proceeding.
+If any run shows resolution errors or unexplained exclusions, stop.
+Investigate, fix, and re-run the dry rehearsal before proceeding.
 
-### Enabling the discovery sensor
+### Enabling the discovery sensors
 
 For ongoing operation, the preferred pattern is to **start
-`maxima_raw_discovery_sensor`** in the Dagster UI. Each tick
-(hourly minimum) the sensor will:
+`maxima_run_discovery_sensor`** and
+**`helix_trace_discovery_sensor`** in the Dagster UI. Each
+tick (hourly minimum) the MAXIMA sensor will:
 
-1. Fetch the partition index for `xrd_raw`, `xrf_raw`, and
-   `xrd_metadata`.
+1. Fetch the partition index for `xrd_raw`, `xrf_raw`, `xrd_derived`,
+   and `xrd_metadata`.
 2. Register any new `"<igsn>//<experiment_date>"` keys on the
-   `maxima_raw_run` dynamic dim.
-3. Emit one `RunRequest` per `(data_type, aimdl_key)`, dedupping
-   on a run_key that composes both the raw and `xrd_metadata`
-   content hashes — so unchanged partitions are silently
-   suppressed on subsequent ticks.
+   `maxima_run` dynamic dim.
+3. Emit one `RunRequest` per run key, dedupping on a run_key that
+   composes every per-data-type content hash plus the `xrd_metadata`
+   hash — so unchanged partitions are silently suppressed on
+   subsequent ticks.
 
 On first enablement, expect hundreds of new partition keys in a
 single tick (bounded by the current AIMD-L partition count).
 Treat the first tick as a one-time catch-up event. Sensor runs
 inherit the job's default `dry_run=True`; flip `dry_run=False`
-in the sensor-launched runs only after a live MAXIMA raw rehearsal
-against a single partition has passed.
+in the sensor-launched runs only after a live rehearsal against a
+single partition has passed.
 
 ## Live sweep
 
@@ -114,15 +150,22 @@ hand.
 
 ### Order of operations
 
-The three sibling jobs must run in this order — derived leaves
-inherit from parent items written by raw leaves and by the
-spreadsheet DAG:
+Run the flows in this order — HELIX ALPSS inherits coordinates from the
+`pdv_trace` parents that the HELIX log flow writes:
 
-1. **MAXIMA raw first.** Writes `Station_X/Y`, `Sample_X/Y`, and
-   `coord_provenance` on `xrd_raw` and `xrf_raw` items.
-2. **HELIX ALPSS and MAXIMA derived second**, in either order
-   relative to each other. Both inherit from already-enriched
-   parents (PDV traces and `xrd_raw` master.h5 respectively).
+1. **HELIX logs first.** `process_helix_assets_job` writes
+   `Station_X/Y`, `Sample_X/Y`, and `coord_provenance` onto the matched
+   `pdv_trace` items.
+2. **HELIX ALPSS second.** Inherits from those now-enriched traces.
+3. **MAXIMA at any point.** It is fully independent of HELIX — it
+   resolves coordinates from each run's `instructions.txt`, not by
+   inheritance from a HELIX parent. Running it first, last, or
+   concurrently is equally correct.
+
+Running HELIX ALPSS before the HELIX logs is not an *error* under the
+exclusion policy — its items are classified `parent_not_enriched`,
+dropped from the denominator, and the checks pass. It simply does no
+work. That is why order matters even though nothing turns red.
 
 ### Operator confirmation discipline
 
@@ -140,43 +183,33 @@ This is the protocol that lived in the retired bash script's "Type
 LIVE SWEEP to proceed" gate. Without an automated tool, the discipline
 moves to the operator.
 
-### Step 1 — MAXIMA raw
+### Step 1 — HELIX experiment logs
 
-Open the Dagster UI launchpad for `coord_enrichment_maxima_raw_job`.
+Open the Dagster UI launchpad for `process_helix_assets_job`. Its
+partitions are the dynamic `helix_experiment_log` dim, keyed on
+`"<igsn>//<experiment_date>"` and populated by
+`helix_trace_discovery_sensor`.
 
-The job's partitions are
-`MultiPartitionsDefinition({data_type, run})`, where the `run` dim is
-dynamic and populated by `maxima_raw_discovery_sensor`. Choices:
+For the first live sweep, pick one or a few partitions in the UI's
+partition selector. Run config:
 
-- **For a small, targeted sweep** (recommended for the first live
-  sweep): pick one or a few `(data_type, run)` partitions in the UI's
-  partition selector. Provide run config:
+```yaml
+ops:
+  pdv_data:
+    config:
+      dry_run: false
+  pdv_processing_manifest:
+    config:
+      dry_run: false
+```
 
-  ```yaml
-  ops:
-    enriched_maxima_raw:
-      config:
-        dry_run: false
-  ```
+`pdv_log` takes no config — do not add it, Dagster will reject the run.
 
-  Click Launch. Repeat for each desired partition.
+Click Launch. Widen the partition selection once a targeted sweep has
+verified end-to-end against production.
 
-- **For a full sweep across every registered partition** (recommended
-  only after the targeted sweep above has verified end-to-end against
-  production): instead of the launchpad, **set
-  `coord_enrichment_maxima_raw_weekly_schedule` to STARTED with
-  `dry_run: false` in its run config**. The schedule is gap-filling
-  reconciliation — it enumerates registered partitions and fires only
-  for partitions without a successful materialization. This is what
-  the retired bash script tried to do, but the schedule does it
-  correctly.
-
-  After one cycle has run to completion, set the schedule back to
-  STOPPED. Live writes are not for ongoing automation; the schedule's
-  default `dry_run: true` setting should be the steady state.
-
-Wait for all MAXIMA raw runs to complete before moving on. Both
-inherited-leaf jobs depend on these results being on the items.
+Wait for these runs to complete before Step 2. HELIX ALPSS depends on
+the coordinates now sitting on the `pdv_trace` items.
 
 ### Step 2 — HELIX ALPSS
 
@@ -201,19 +234,38 @@ ops:
 
 Click Launch.
 
-### Step 3 — MAXIMA derived
+### Step 3 — MAXIMA
 
-Open the launchpad for `coord_enrichment_maxima_derived_job`. Single
-static partition `MAXIMA/xrd_derived`. Run config:
+Open the launchpad for `coord_enrichment_maxima_job`. Its partitions
+are the dynamic `maxima_run` dim, populated by
+`maxima_run_discovery_sensor`. Choices:
 
-```yaml
-ops:
-  enriched_maxima_derived:
-    config:
-      dry_run: false
-```
+- **For a small, targeted sweep** (recommended for the first live
+  sweep): pick one or a few run partitions in the UI's partition
+  selector. Provide run config:
 
-Click Launch.
+  ```yaml
+  ops:
+    enriched_maxima_run:
+      config:
+        dry_run: false
+  ```
+
+  Click Launch. Repeat for each desired partition.
+
+- **For a full sweep across every registered partition** (recommended
+  only after the targeted sweep above has verified end-to-end against
+  production): instead of the launchpad, **set
+  `coord_enrichment_maxima_weekly_schedule` to STARTED with
+  `dry_run: false` in its run config**. The schedule is gap-filling
+  reconciliation — it enumerates registered partitions and fires only
+  for partitions without a successful materialization. This is what
+  the retired bash script tried to do, but the schedule does it
+  correctly.
+
+  After one cycle has run to completion, set the schedule back to
+  STOPPED. Live writes are not for ongoing automation; the schedule's
+  default `dry_run: true` setting should be the steady state.
 
 ### Audit trail
 
@@ -236,14 +288,18 @@ Watch the Dagster UI asset check panel:
 
 - `all_helix_alpss_tagged` must be green after
   `helix_alpss_provenance_tagged` materializes.
-- `maxima_xrd_derived_provenance_valid` must be green after
-  `enriched_maxima_derived` materializes. It fails if any
-  xrd_derived item has a missing or dangling
-  `prov.wasDerivedFrom` — a data-hygiene signal about amdee_xrd
-  upstream, not a bug in this pipeline.
-- Per-partition enrichment success checks should be green.
-- `pdv_coverage_above_threshold` reflects the observer — not
-  written to by the live sweep but useful cross-check.
+- `igsn_consistency` and `manifest_written` (both ERROR) must be green
+  on each `process_helix_assets_job` partition.
+- Per-partition `enrichment_success_rate_*`,
+  `no_coord_transform_failures_*`, and `coord_transform_check` should
+  be green.
+- `pdv_match_rate` and `pdv_coverage_above_threshold` are coverage
+  signals, not gates. Record them. Expect ~92% pairing where a log is
+  tagged; partitions without one pass with `log_items: 0`.
+
+Then read the per-leaf `in_scope` / `excluded_by_reason` metadata, per
+the exclusion-policy section above. Green checks over a collapsed
+denominator are the failure mode this sweep is most likely to hit.
 
 Check the manifest Girder item: it should now have a
 `meta.coord_enrichment_status` payload with today's timestamp,
@@ -264,22 +320,21 @@ is a Girder UI action — outside the scope of this runbook.
 ## After the first live sweep
 
 1. Record the observed values for every asset check in
-   `docs/runbooks/first_sweep_expected_values.md` (created in
-   Phase 5 Step 4). These become the reference for future
-   sweeps.
+   `docs/runbooks/first_sweep_expected_values.md`. These become the
+   reference for future sweeps.
 2. Consider turning on `coord_enrichment_state_report_schedule`
    (nightly) once the manifest item and env vars are confirmed
    stable.
-3. Consider starting `maxima_raw_discovery_sensor`. On first
-   tick it will register every current AIMD-L `(data_type, run)`
-   pair and emit a RunRequest for each; all subsequent ticks
-   suppress unchanged partitions via the composed
-   raw+xrd_metadata content-hash dedup key.
-4. The weekly `coord_enrichment_maxima_raw_weekly_schedule` is
-   now gap-filling reconciliation — it enumerates the registered
+3. Consider starting `maxima_run_discovery_sensor` and
+   `helix_trace_discovery_sensor`. On first tick each will
+   register every current AIMD-L key and emit a RunRequest per key;
+   all subsequent ticks suppress unchanged partitions via the
+   content-hash dedup key.
+4. The weekly `coord_enrichment_maxima_weekly_schedule` is
+   gap-filling reconciliation — it enumerates the registered
    partitions and emits RunRequests only for partitions with no
    successful materialization. Still STOPPED by default, still
    dry-run only. Enable once the sensor has been running long
    enough to trust that gaps are real (not sensor-tick latency).
-5. Leave the HELIX ALPSS and MAXIMA derived weekly sweep
-   schedules STOPPED until a team decision is made on cadence.
+5. Leave the HELIX ALPSS weekly sweep schedule STOPPED until a team
+   decision is made on cadence.

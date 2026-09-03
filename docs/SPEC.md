@@ -151,83 +151,168 @@ These are the cross-cutting rules. Every capability in §5 inherits them.
 
 Each capability lists requirements (`SPEC‑*`) in EARS / Given‑When‑Then form.
 
-### C1 — HELIX spreadsheet → `pdv_trace` enrichment
-*(the "helix_spreadsheet" DAG; **3 partitioned assets** since issue #31)*
+### C1 — HELIX `pdv_trace` enrichment
 
-Partitioned by the AIMD‑L key `<igsn>//<experiment_date>` on
-`HELIX_EXPERIMENT_LOG_PARTITIONS` (`DynamicPartitionsDefinition("helix_experiment_log")`).
-Three durable assets — `pdv_log → pdv_data → pdv_processing_manifest` — model
-external-state transitions; pure computation lives in `spreadsheet.py`. Both
-writing assets take `HelixSpreadsheetConfig` with `dry_run: bool = True`.
-Job name `process_helix_assets_job` is preserved from the 9-asset design.
+*(the "helix_spreadsheet" DAG; **3 partitioned assets**)*
 
-- **SPEC‑HELIX‑01 — Ingest.** When given a spreadsheet item id + filename, the
-  system shall download the first file of that item and load it (`.csv` →
-  `read_csv`, else `read_excel`), then rename columns via `COLUMN_MAP`. The
-  partition may resolve to more than one log item; all are concatenated.
-  *(`pdv_log`; `download_and_read` raises if the item has no files. Tests:
+**The trace is the unit of work.** Every PDV trace registered in Girder carries
+`meta.igsn`, and the `/aimdl/partition` endpoint supplies its experiment date;
+together those give the AIMD-L key `<igsn>//<experiment_date>`, which resolves
+to the experiment log holding the row that records the shot's flyer position.
+The flow therefore iterates traces and, for each, finds its row — not the other
+way round.
+
+Two consequences are structural rather than incidental:
+
+- A trace can only take coordinates from a row describing **its own sample**,
+  because matching is scoped to the trace's own partition. Cross-sample
+  contamination is impossible by construction, not prevented by a check.
+- A log row naming a file that was never ingested is a **non-event**. Girder is
+  the only place the data exists; a row with no trace has nothing to enrich and
+  is not a reported gap.
+
+Traces without `meta.igsn` never appear in the partition index, so "skip
+unannotated traces" needs no filter.
+
+Partitioned on `HELIX_TRACE_PARTITIONS`
+(`DynamicPartitionsDefinition("helix_pdv_trace")`). Three durable assets —
+`pdv_log → pdv_data → pdv_processing_manifest` — model external-state
+transitions; pure computation lives in `spreadsheet.py`. Both writing assets
+take `HelixSpreadsheetConfig` with `dry_run: bool = True`. Job name
+`process_helix_assets_job`.
+
+- **SPEC‑HELIX‑01 — Ingest.** Given a partition key, the system shall fetch the
+  `pdv_experiment_log` item(s) for that same key, download each (`.csv` →
+  `read_csv`, else `read_excel`), rename columns via `COLUMN_MAP`, and
+  concatenate. A key may resolve to one log item, several, or **none** — traces
+  exist for sessions whose log was never tagged upstream, and those partitions
+  read an empty frame rather than failing. *(`pdv_log`; tests:
   `test_pdv_log_reads_partition`, `test_normalize_experiment_log_renames_columns`.)*
 - **SPEC‑HELIX‑02 — IGSN validation.** For each row, the system shall validate
   `Sample_IGSN` against the IGSN pattern, classifying each as `valid`,
   `missing` (None/NaN/empty), or `invalid_format`. *(`pdv_log`; tests:
   `test_validate_log_rows`.)*
-- **SPEC‑HELIX‑03 — PDV inventory.** The system shall fetch all `pdv_trace`
-  items via the indexed `/aimdl/datafiles` endpoint (paginated 100/page), not by
-  crawling folders. *Tests: `test_fetch_all_paginates`,
-  `test_fetch_datafiles_respects_limit_cap`.*
-- **SPEC‑HELIX‑04 — Matching.** For each row with a non-empty `PDV_FileName`, the
-  system shall match it to inventory items by **filename prefix**
-  (`item.name.startswith(filename)`). Given 0 matches → `not_found`; given >1 →
-  `ambiguous` (no item chosen); given exactly 1 → matched. Blank/NaN filenames
-  are skipped silently with no issue. *(`pdv_data`; tests: `test_exact_match`,
-  `test_match_pdv_rows_match_and_not_found_and_nan`.)*
-- **SPEC‑HELIX‑04a — Channel-prefix fallback.** A PDV trace is stored under the
+- **SPEC‑HELIX‑03 — Trace set.** The system shall fetch the partition's PDV
+  traces via `/aimdl/partition/details?dataType=pdv_trace&key=<key>` — the
+  partition's traces only, never the whole collection. *(`pdv_data`.)*
+- **SPEC‑HELIX‑04 — Filename stem.** A log's `PDV_FileName` may record the
+  station-local absolute path the file was written to before it was streamed
+  into Girder (`C:\Users\Administrator\Desktop\PDV_DATA\<name>`). Girder is
+  the only place the file exists, so the directory part names nothing; the
+  system shall reduce the cell to its trailing component with
+  `ntpath.basename` (`ntpath`, not `os.path` — this runs on POSIX, which does
+  not split on backslashes). Blank/NaN cells name no file and are omitted.
+  *Measured 2026‑09‑01: 657 log rows whose file had otherwise gone
+  unmatched resolve on this normalization alone. Tests: `test_windows_path_reduces_to_its_basename`,
+  `test_blank_cells_name_no_file`,
+  `test_trace_matches_a_row_recorded_as_a_windows_path`.*
+- **SPEC‑HELIX‑04a — Pairing.** For each trace, the system shall find the single
+  log row whose stem prefixes the trace name (`trace.name.startswith(stem)`).
+  Given exactly 1 → paired; given 0 → `no_row_in_log`; given >1 →
+  `ambiguous_row`, and **no row is chosen**. Two rows claiming one trace means
+  the partition holds contradictory logs; guessing would apply the wrong shot's
+  coordinates. *Tests: `test_matches_the_single_naming_row`,
+  `test_trace_with_no_row_in_the_log`,
+  `test_two_rows_claiming_one_trace_is_ambiguous`.*
+- **SPEC‑HELIX‑04b — Channel-prefix fallback.** A trace is stored under the
   digitizer channel that recorded it, so its Girder name may carry a leading
-  `C<n>--` that the log's `PDV_FileName` omits. When and only when the exact
-  pass finds nothing, the system shall retry ignoring that prefix on the item
-  name. Exact match is tried first and wins outright, so the fallback cannot
-  change the outcome for a filename that already matched. The unique-match
-  requirement holds on both paths (INV‑5); a relaxed multi-match is reported
-  `ambiguous` with `via: "channel_prefix"`. Only `C<n>--` is stripped — an
-  arbitrary leading token is still `not_found`. *Measured 2026‑08‑31 across all
-  255 tagged logs: coverage of fired shots 48.8% → **81.1%** (3,270/4,033),
-  **0 ambiguities**. Tests: `test_matches_across_channel_prefix`,
+  `C<n>--` the log omits. When and only when the exact pass finds nothing, the
+  system shall retry with that prefix stripped from the trace name. Exact match
+  is tried first and wins outright, so the fallback cannot change an outcome
+  that already matched. The unique-match requirement holds on both paths
+  (INV‑5). Only `C<n>--` is stripped — an arbitrary leading token still yields
+  `no_row_in_log`. *Tests: `test_matches_across_channel_prefix`,
   `test_exact_prefix_match_wins_over_the_fallback`,
-  `test_two_channels_for_one_row_is_still_ambiguous`,
   `test_only_a_channel_prefix_is_stripped`.*
-- **SPEC‑HELIX‑04b — Multi-channel logs are OUT OF SCOPE (2026‑08‑31).** Logs
-  from 2026‑08 onward record one column per probe (`PDV_<n>_FileName`) and no
-  bare `PDV_FileName`. `girder-consumers/helix-otherdata` gates its
-  `pdv_experiment_log` tagging on that bare column, so all 47 such logs are
-  untagged, absent from `/aimdl/partition`, and unreachable. Deferred as separate
-  work pending an upstream consumer fix; this capability covers the 258
-  single-channel tagged logs only.
-- **SPEC‑HELIX‑05 — IGSN consistency.** When a row matches an item and both carry
-  a truthy IGSN that differ, the system shall record an `igsn_mismatch` issue
-  (but still keep the match). *Tests: `test_match_pdv_rows_flags_igsn_mismatch`.*
-- **SPEC‑HELIX‑06 — Enrich.** For each matched item, the system shall compute
+- **SPEC‑HELIX‑04c — Shot-identity pairing (multipoint).** A multipoint shot
+  writes one trace per probe, and the log-writing software does not record all
+  of them — measured 2026‑09‑02, every multipoint log names C1 and C3 and never
+  C2 though the two exist in equal numbers, and some earlier runs name only one
+  channel of three. This is a known upstream bug.
+
+  The coordinate written is the **flyer position**, a property of the shot, not
+  of the probe: every probe in one shot sees the same flyer in the same place.
+  An unnamed channel's coordinate is therefore not unknown — it is the value the
+  row already gives its named siblings, and identical to what the corrected log
+  will supply. When and only when both earlier passes find nothing, the system
+  shall retry with the channel prefix stripped from **both** the trace name and
+  the row stems. The remainder of the name carries IGSN, run id, timestamp and
+  shot number, so it is unique to one shot. Unique match → paired with
+  ``pairing = "shot_identity"``; more than one → `ambiguous_row` with
+  `via: "shot_identity"`.
+
+  Such pairings shall record `station_coord_source.pairing = "shot_identity"`
+  (versus `"filename"`) so the affected items stay queryable and can be
+  re-verified against the corrected logs. *Tests:
+  `test_unnamed_sibling_channel_pairs_by_shot_identity`,
+  `test_shot_identity_does_not_reach_a_different_shot`,
+  `test_shot_identity_refuses_two_rows_claiming_one_shot`,
+  `test_write_pdv_metadata_records_how_the_trace_was_paired`.*
+- **SPEC‑HELIX‑04d — Per-probe filename columns.** A multipoint log has no bare
+  `PDV_FileName`; it carries one block per probe, `PDV_<n>_FileName`, where
+  `<n>` is the probe id (not the digitizer channel). Several probes may be
+  recorded onto one channel file, so a row's probe columns collapse to fewer
+  distinct filenames than it has populated probes. The system shall read the
+  bare column plus every `PDV_<n>_FileName`, yielding a set of stems per row;
+  every file a row names takes that row's coordinates. *Measured on
+  `LMI_20260818_JHAMAL00021-003.csv`: 7 probe columns, 4 populated per row,
+  2 distinct files (probe 10 → C1, probes 6/9/15 → one shared C3). Tests:
+  `test_row_filename_stems_reads_per_probe_columns`,
+  `test_one_row_naming_several_files_pairs_each_of_them`.*
+- **SPEC‑HELIX‑04e — Untagged experiment logs.** A partition's traces can only
+  be paired if the session's experiment log carries `meta.data_type`.
+  `girder-consumers/helix-otherdata` gates that tagging on a literal
+  `PDV_FileName` column, which multi-channel logs (one column per probe,
+  `PDV_<n>_FileName`) do not have. Those partitions pair nothing until the
+  upstream consumer is fixed. `pdv_match_rate` records `log_items: 0` and
+  passes — there is nothing this pipeline can act on. After the upstream fix,
+  `COLUMN_MAP` / `row_filename_stems` must read every `PDV_<n>_FileName` and
+  dedupe by filename.
+- **SPEC‑HELIX‑04f — Scope.** Only items returned by the `/aimdl/*` endpoints
+  are in scope. Traces without `meta.igsn` never appear there — attempted shots
+  that never triggered, test shots (`TEST00_000…`), and shots on unregistered
+  samples. They can never carry meaningful coordinates and are not counted,
+  reported, or reconciled by this pipeline. *Measured 2026‑09‑01: multipoint
+  traces are tagged correctly; all three channels of a real shot are indexed
+  together.*
+- **SPEC‑HELIX‑05 — IGSN authority.** The trace's own `meta.igsn` is
+  authoritative. When a trace pairs to a row whose validated IGSN differs, the
+  system shall record an `igsn_mismatch` issue and **refuse the pair** — the
+  trace is left untouched. A partition's log may hold rows from a restarted run
+  written under the previous sample's identifier; applying one would put
+  another sample's coordinates on this trace. *Tests:
+  `test_pair_traces_to_rows_refuses_a_row_declaring_another_sample`.*
+- **SPEC‑HELIX‑06 — Enrich.** For each paired trace, the system shall compute
   `Station_X/Y` from `Flyer_X/Y_Position_Corrected`, derive `Sample_X/Y` via the
   timestamp-selected transform (rounded to 4 dp), build `coord_provenance`
   (`station_coord_source.kind = "helix_experiment_log"`), and write the
-  coordinate payload to the matched item. *(`pdv_data`; tests:
+  coordinate payload to the trace item. *(`pdv_data`; tests:
   `test_write_pdv_metadata_writes_coords_and_provenance`,
   `test_pdv_data_version_boundary_dispatch`.)*
+- **SPEC‑HELIX‑06a — No coordinate, no write.** The corrected flyer position
+  (`Flyer_X/Y_Position_Corrected`) is blank on some rows. Where either is
+  missing the system shall write nothing and count `no_station_coords`:
+  recording `Station/Sample = null` with a provenance block naming a transform
+  that never ran would put meaningless metadata on the item. The desired
+  position is **not** substituted — it is the commanded value, not the measured
+  one. *Tests: `test_write_pdv_metadata_skips_rows_with_no_corrected_flyer_position`.*
 - **SPEC‑HELIX‑07 — Timestamp normalization.** The shot timestamp comes from the
   row `Timestamp` column; a naive value is assumed UTC (origin recorded as
   `..._assumed_utc`) and counted; unparseable/missing → no version selection.
-- **SPEC‑HELIX‑08 — Audit manifest + idempotent skip.** After processing, the
-  system shall write a `processing_status` manifest to the *source spreadsheet*
-  item (counts + `status ∈ {completed_clean, completed_with_warnings}`), and the
-  sensor shall skip spreadsheets already marked `completed_clean`.
-  *(`pdv_processing_manifest`; tests: `test_summarize_pdv_processing_clean`,
+- **SPEC‑HELIX‑08 — Audit manifest.** After processing, the system shall write a
+  `processing_status` manifest to each *source log* item (trace counts +
+  `status ∈ {completed_clean, completed_with_warnings}`). A partition with no
+  tagged log has no manifest target; that is an upstream gap already reported by
+  `pdv_match_rate`, not a write failure. *(`pdv_processing_manifest`; tests:
+  `test_summarize_pdv_processing_clean`,
   `test_summarize_pdv_processing_with_warnings`,
   `test_write_processing_manifest_success`.)*
-- **SPEC‑HELIX‑09 — Completeness reporting.** *(**Withdrawn** in issue #31.)*
-  The 9-asset design reported per-IGSN ALPSS coverage via `quality_report` +
-  `alpss_results_inventory`; both assets were removed. Issue #31 assigned the
-  concern to the observer flow, but `helix_pdv_coverage_observer` measures a
-  different thing (coord-provenance coverage on `pdv_trace`, not missing ALPSS
-  results). **This capability currently has no owner** — see Q9.
+- **SPEC‑HELIX‑09 — Completeness reporting.** *(**Withdrawn**.)* The 9-asset
+  design reported per-IGSN ALPSS coverage via `quality_report` +
+  `alpss_results_inventory`; both assets were removed.
+  `helix_pdv_coverage_observer` measures a different thing (coord-provenance
+  coverage on `pdv_trace`, not missing ALPSS results). **This capability
+  currently has no owner** — see Q9.
 - **SPEC‑HELIX‑10 — Dry run.** `pdv_data` and `pdv_processing_manifest` shall
   perform no Girder write when `config.dry_run` is true, and shall count what
   they *would* have written. Sensor-emitted RunRequests carry no run_config, so
@@ -429,10 +514,10 @@ materialization metadata from the event log (see SPEC‑ORCH‑03).
 | Check | Asset | Severity | Fires when |
 |---|---|---|---|
 | `igsn_validity_rate` | `pdv_log` | WARN | < 80% valid |
-| `zero_pdv_inventory` | `pdv_data` | ERROR | 0 items |
-| `pdv_match_rate` | `pdv_data` | WARN | < 50% matched |
-| `igsn_consistency` | `pdv_data` | ERROR | any mismatch |
-| `enrichment_success_rate` | `pdv_data` | WARN | < 90% success |
+| `zero_traces_in_partition` | `pdv_data` | ERROR | partition holds 0 traces |
+| `pdv_match_rate` | `pdv_data` | WARN | < 50% of traces paired, or no tagged log |
+| `igsn_consistency` | `pdv_data` | ERROR | any trace paired a row declaring another sample |
+| `enrichment_success_rate` | `pdv_data` | WARN | < 90% of paired traces enriched |
 | `coord_transform_check` | `pdv_data` | WARN | any transform failure |
 | `manifest_written` | `pdv_processing_manifest` | ERROR | manifest not written |
 | `enrichment_success_rate_*` / `no_coord_transform_failures_*` | coord_enrichment leaves | WARN | as above, per leaf |
@@ -449,9 +534,9 @@ false-positive edge cases are open — see Q10.
 
 ### C10 — Orchestration & safety
 
-- **SPEC‑ORCH‑01 — HELIX sensor.** `helix_experiment_log_discovery_sensor` shall
-  poll `/aimdl/partition?dataType=pdv_experiment_log`, register new
-  `<igsn>//<experiment_date>` keys on the `helix_experiment_log` dynamic
+- **SPEC‑ORCH‑01 — HELIX sensor.** `helix_trace_discovery_sensor` shall
+  poll `/aimdl/partition?dataType=pdv_trace`, register new
+  `<igsn>//<experiment_date>` keys on the `helix_pdv_trace` dynamic
   dimension, and emit one partitioned RunRequest per changed log, deduped by
   content hash and skipping logs already marked `completed_clean`. STOPPED by
   default, ≥3600 s interval. *Tests: `test_sensors_helix_discovery.py`.*
