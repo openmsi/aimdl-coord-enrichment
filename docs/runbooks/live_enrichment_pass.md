@@ -166,10 +166,57 @@ now carries:
 
 ## 7. Live — the rest of HELIX
 
-Same job and config as §6, selecting all partitions in the launchpad's
-partition selector, or in batches if you prefer to watch it.
+A Launchpad run targets **one** partition. Many partitions is a *backfill*, a
+different launch path — and the thing to watch is that the backfill still
+carries `dry_run: false`. Without run config the assets fall back to their
+default `dry_run: true` and the backfill will write **nothing**.
 
-Expect roughly **5,813 items enriched** across 290 partitions.
+Verified for the installed Dagster (1.13.9): the backfill API accepts run
+config and applies it to the runs it creates. The `dagster job backfill` CLI
+does **not** accept config — only `--tags` — so do not use it for this.
+
+### Selecting all partitions
+
+In the `process_helix_assets_job` **Launchpad**, the partition selector is at
+the top of the config editor.
+
+1. Open the partition selector.
+2. Choose all partitions — the selector offers a "Select all" / range control
+   rather than requiring you to tick 290 boxes individually.
+3. With more than one partition selected, the launch button changes to
+   indicate a **backfill** rather than a single run.
+4. **Before launching, confirm the run config still reads:**
+
+   ```yaml
+   ops:
+     pdv_data:
+       config:
+         dry_run: false
+     pdv_processing_manifest:
+       config:
+         dry_run: false
+   ```
+
+   If the config editor disappears when you select multiple partitions, or the
+   backfill dialog gives you no way to supply run config, **stop** — that path
+   would launch 290 dry runs that write nothing. Use the batching approach
+   below instead, or ask for a scripted pass.
+
+The same backfill is also reachable from the job's **Partitions** tab.
+
+### Do it in batches, not all 290 at once
+
+For a first live write, prefer batches over one 290-partition backfill:
+
+- it bounds the blast radius if something is wrong
+- a batch finishes soon enough to inspect before committing to the next
+- the partition selector accepts a range, so batching costs only a few extra
+  launches
+
+A reasonable split is by month (`//2025-10`, `//2026-04`, …), or simply in
+groups of ~25 partitions. Check the first batch in Girder before continuing.
+
+Expect roughly **5,813 items enriched** across all 290 partitions.
 
 ### While it runs
 
@@ -182,8 +229,8 @@ Watch the asset-check panel. These must stay green:
 | `manifest_written` | ERROR |
 | `coord_transform_check` | WARN |
 
-These will show expected failures — they are reporting upstream data gaps,
-not faults in this run:
+These will show expected failures — they report upstream data gaps, not faults
+in this run:
 
 - `enrichment_success_rate` — fails on **26 partitions, all 2026-08**, where
   the log rows have no corrected flyer position
@@ -195,7 +242,12 @@ not faults in this run:
 Anything failing **outside** those two lists is unexpected — stop and
 investigate.
 
----
+### Confirming the backfill actually wrote
+
+A backfill that silently ran dry is the failure mode to catch early. After the
+first batch, check any one run's `pdv_data` metadata: `items_enriched` must be
+> 0 and `items_simulated` must be 0. If it is the other way round, the config
+did not reach the runs — stop and fix that before launching more.
 
 ## 8. HELIX ALPSS — inherit to the derived files
 
