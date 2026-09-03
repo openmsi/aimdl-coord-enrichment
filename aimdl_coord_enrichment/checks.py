@@ -53,67 +53,79 @@ def eval_igsn_validity(md):
     )
 
 
-def eval_zero_inventory(md):
-    """ERROR if the PDV trace inventory returned zero items."""
-    count = int(md.get("inventory_count", 0))
+def eval_zero_traces(md):
+    """ERROR if the partition resolved zero PDV traces.
+
+    Partitions come from the trace index, so every one of them should hold at
+    least one trace. Zero means the index and the detail endpoint disagree.
+    """
+    count = int(md.get("traces_in_partition", 0))
     passed = count > 0
     return AssetCheckResult(
         passed=passed,
         severity=AssetCheckSeverity.ERROR,
-        metadata={"item_count": count},
+        metadata={"traces_in_partition": count},
         description=(
-            f"Inventory contains {count} items."
+            f"Partition holds {count} PDV trace(s)."
             if passed
-            else "Inventory is EMPTY. Check that meta.igsn is tagged on PDV files."
+            else "Partition resolved ZERO traces despite appearing in the "
+                 "pdv_trace partition index."
         ),
     )
 
 
 def eval_pdv_match_rate(md):
-    """WARN if fewer than 50% of *fired* shots were matched to a PDV trace.
+    """WARN if fewer than 50% of this partition's traces found their log row.
 
-    A HELIX log rows every candidate shot; the station decides at fire time
-    whether to proceed. Rows for shots that never fired carry no PDV filename
-    and have no trace to match, so counting them would make a fully-successful
-    partition look half-failed. The denominator is rows with a filename, which
-    is the same population as fired shots (see spreadsheet.shot_fired).
+    The denominator is the traces in the partition — the work that exists.
+
+    A partition whose experiment log is not tagged upstream has no rows to pair
+    against, so there is nothing this pipeline can do and nothing for an
+    operator to act on. It passes, with ``log_items: 0`` recorded so the
+    condition stays queryable without turning the run red.
     """
-    rows_with_pdv = int(md.get("rows_with_pdv", 0))
-    matched_count = int(md.get("matched_count", 0))
-    not_fired = int(md.get("shots_not_fired", 0))
-    rate = matched_count / rows_with_pdv if rows_with_pdv > 0 else 0.0
-    if rows_with_pdv == 0:
+    traces = int(md.get("traces_in_partition", 0))
+    paired = int(md.get("paired_count", 0))
+    has_log = int(md.get("log_items", 0)) > 0
+
+    if traces == 0:
         return AssetCheckResult(
             passed=True,
             severity=AssetCheckSeverity.WARN,
-            metadata={
-                "shots_not_fired": not_fired,
-                "rows_with_pdv_filename": 0,
-            },
+            metadata={"traces_in_partition": 0},
+            description="No traces in this partition; nothing to pair.",
+        )
+    if not has_log:
+        return AssetCheckResult(
+            passed=True,
+            severity=AssetCheckSeverity.WARN,
+            metadata={"traces_in_partition": traces, "paired_count": paired,
+                      "log_items": 0},
             description=(
-                f"No shots fired in this partition ({not_fired} candidate "
-                "shot(s) skipped at the station); nothing to match."
+                f"No experiment log tagged for this partition; its {traces} "
+                "trace(s) have nothing to pair against."
             ),
         )
-    suffix = f"; {not_fired} candidate shot(s) not fired" if not_fired else ""
+    rate = paired / traces
     return AssetCheckResult(
         passed=rate >= 0.5,
         severity=AssetCheckSeverity.WARN,
         metadata={
-            "rows_with_pdv_filename": rows_with_pdv,
-            "matched_count": matched_count,
+            "traces_in_partition": traces,
+            "paired_count": paired,
             "match_rate": round(rate, 3),
-            "shots_not_fired": not_fired,
+            "unpaired_by_reason": md.get("unpaired_by_reason", ""),
         },
-        description=(
-            f"PDV match rate: {rate:.1%} ({matched_count}/{rows_with_pdv})"
-            f"{suffix}"
-        ),
+        description=f"Trace pairing rate: {rate:.1%} ({paired}/{traces})",
     )
 
 
 def eval_igsn_consistency(md):
-    """ERROR if any matched PDV item has a different IGSN than the row."""
+    """ERROR if any trace paired to a row declaring a different sample.
+
+    Such a row is refused, never applied, so this reports a contradictory log
+    in the partition rather than a bad write.
+    """
     mismatch_count = int(md.get("igsn_mismatch_count", 0))
     passed = mismatch_count == 0
     return AssetCheckResult(
@@ -121,32 +133,45 @@ def eval_igsn_consistency(md):
         severity=AssetCheckSeverity.ERROR,
         metadata={"mismatch_count": mismatch_count},
         description=(
-            "No IGSN mismatches."
+            "No IGSN disagreement between traces and their log rows."
             if passed
-            else f"{mismatch_count} IGSN mismatch(es) between spreadsheet and Girder items."
+            else f"{mismatch_count} trace(s) matched a log row declaring a "
+                 "different IGSN; those traces were left untouched."
         ),
     )
 
 
 def eval_enrichment_success_rate(md):
-    """WARN if fewer than 90% of matched items were successfully enriched.
+    """WARN if fewer than 90% of *paired* traces were successfully enriched.
+
+    The denominator is traces that found their row — the work this asset can
+    actually do. Whether a trace found a row at all is pdv_match_rate's
+    question, so a partition with no log reads as "nothing to enrich" here
+    rather than failing twice for one cause.
 
     Counts dry-run simulated writes as successes so a rehearsal reads as
     representative of a live run.
     """
-    matched_count = int(md.get("matched_count", 0))
+    paired = int(md.get("paired_count", 0))
     success = int(md.get("items_enriched", 0)) + int(md.get("items_simulated", 0))
-    rate = success / matched_count if matched_count > 0 else 0.0
+    if paired == 0:
+        return AssetCheckResult(
+            passed=True,
+            severity=AssetCheckSeverity.WARN,
+            metadata={"paired_count": 0},
+            description="No traces paired to a log row; nothing to enrich.",
+        )
+    rate = success / paired
     return AssetCheckResult(
         passed=rate >= 0.9,
         severity=AssetCheckSeverity.WARN,
         metadata={
-            "matched_count": matched_count,
+            "paired_count": paired,
             "enriched_or_simulated": success,
             "write_errors": int(md.get("write_errors_count", 0)),
             "success_rate": round(rate, 3),
         },
-        description=f"Enrichment success rate: {rate:.1%} ({success}/{matched_count})",
+        description=f"Enrichment success rate: {rate:.1%} ({success}/{paired})",
     )
 
 
@@ -194,17 +219,24 @@ def eval_coord_transform(md):
 
 
 def eval_manifest_written(md):
-    """ERROR if the processing manifest was not written to any source item."""
+    """ERROR if a real manifest write failed.
+
+    A partition whose log was never tagged upstream has no item to write to.
+    That is an upstream gap already reported by pdv_match_rate, not a failure
+    of this write, so it passes here with ``has_log`` recording the reason.
+    """
     written = bool(md.get("manifest_written", False))
+    has_log = bool(md.get("has_log", True))
     return AssetCheckResult(
         passed=written,
         severity=AssetCheckSeverity.ERROR,
-        metadata={"status": md.get("status", "unknown")},
+        metadata={"status": md.get("status", "unknown"), "has_log": has_log},
         description=(
             "Processing manifest written to source log item(s)."
+            if written and has_log
+            else "No experiment log tagged for this partition; no manifest target."
             if written
-            else "No source log item to write to (partition resolved zero "
-            "pdv_experiment_log items), or a real write failed."
+            else "A manifest write to a source log item failed."
         ),
     )
 
@@ -223,13 +255,13 @@ def igsn_validity_rate(context):
 
 
 @asset_check(asset="pdv_data")
-def zero_pdv_inventory(context):
+def zero_traces_in_partition(context):
     md = latest_partition_metadata(
         context.instance, "pdv_data", str(context.partition_key)
     )
     if md is None:
         return no_materialization_result(AssetCheckSeverity.ERROR)
-    return eval_zero_inventory(md)
+    return eval_zero_traces(md)
 
 
 @asset_check(asset="pdv_data")

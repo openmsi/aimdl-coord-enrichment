@@ -8,24 +8,23 @@ from dagster import (
     define_asset_job,
 )
 
-from aimdl_coord_enrichment.constants import PDV_TRACE_DATA_TYPE
 from aimdl_coord_enrichment.coordinates import _COORD_YAML
 from aimdl_coord_enrichment.girder_io import (
     download_and_read,
-    fetch_all_aimdl_datafiles,
     fetch_partition_details,
 )
 from aimdl_coord_enrichment.partitions import (
     HELIX_EXPERIMENT_LOG_DATA_TYPE,
-    HELIX_EXPERIMENT_LOG_PARTITIONS,
+    HELIX_TRACE_DATA_TYPE,
+    HELIX_TRACE_PARTITIONS,
 )
 from aimdl_coord_enrichment.provenance import compute_yaml_sha256, get_transformer_version
 from aimdl_coord_enrichment.resources import GirderConnection
 from aimdl_coord_enrichment.spreadsheet import (
     classify_shots,
     count_rows_with_pdv,
-    match_pdv_rows,
     normalize_experiment_log,
+    pair_traces_to_rows,
     summarize_pdv_processing,
     validate_log_rows,
     write_pdv_metadata,
@@ -34,10 +33,17 @@ from aimdl_coord_enrichment.spreadsheet import (
 
 # Design principle for this module: assets model durable external-state
 # transitions, helpers (spreadsheet.py) do the computation, checks
-# (checks.py) provide validation visibility, and partitions give each
-# spreadsheet its own history/retries/backfills. The flow is three
-# partitioned assets — pdv_log -> pdv_data -> pdv_processing_manifest —
-# partitioned by the AIMD-L logical key "<igsn>//<experiment_date>".
+# (checks.py) provide validation visibility, and partitions give each shot
+# session its own history/retries/backfills. The flow is three partitioned
+# assets — pdv_log -> pdv_data -> pdv_processing_manifest — partitioned by
+# the AIMD-L logical key "<igsn>//<experiment_date>" of the PDV *traces*.
+#
+# The trace is the unit of work. Every annotated trace has an IGSN and an
+# experiment date, and those resolve to the log holding the row that gives its
+# flyer position. Driving the flow from the traces (rather than iterating log
+# rows and hunting for files) means a trace can only ever be enriched from a
+# row belonging to its own sample, and a log row with no ingested trace is a
+# non-event rather than a reported gap.
 
 
 class HelixSpreadsheetConfig(Config):
@@ -56,21 +62,22 @@ class HelixSpreadsheetConfig(Config):
 
 @asset(
     group_name="helix_spreadsheet",
-    partitions_def=HELIX_EXPERIMENT_LOG_PARTITIONS,
+    partitions_def=HELIX_TRACE_PARTITIONS,
 )
 def pdv_log(
     context: AssetExecutionContext,
     girder: GirderConnection,
 ) -> dict:
-    """Durable boundary: read the experiment log(s) for one partition.
+    """Durable boundary: read the experiment log(s) for one shot session.
 
-    The partition key is the AIMD-L logical key
-    ``"<igsn>//<experiment_date>"``. Fetches the matching
-    ``pdv_experiment_log`` items, downloads + normalizes each into a
-    DataFrame, concatenates them, and validates IGSNs. A partition key
-    may resolve to one or more log items; all are concatenated and every
-    source item id recorded (each row tagged with its origin via the
-    ``_source_item_id`` column).
+    The partition key is the AIMD-L logical key ``"<igsn>//<experiment_date>"``
+    taken from the PDV *trace* index; the same key selects the experiment
+    log(s) for that session. A key may resolve to one log item, several, or
+    none — traces exist for sessions whose log was never tagged upstream, and
+    those partitions simply have nothing to read here.
+
+    All resolved logs are concatenated and every source item id recorded (each
+    row tagged with its origin via the ``_source_item_id`` column).
 
     Pure computation lives in spreadsheet.py; this asset owns only the
     Girder reads.
@@ -100,14 +107,34 @@ def pdv_log(
         if "valid_igsn" in combined.columns
         else 0
     )
+    # Row-side context only. A log rows every *candidate* shot and the station
+    # decides at fire time; rows for shots that never fired name no file and
+    # have no trace. They explain why a log can hold more rows than the
+    # session has traces, but they are not part of any denominator.
+    shots = classify_shots(combined) if len(combined) else {
+        "fired": 0, "not_fired": 0, "not_fired_by_reason": {}, "fired_but_unnamed": 0,
+    }
+
+    if not items:
+        context.log.warning(
+            "No experiment log tagged for partition %s — its traces cannot be "
+            "enriched until the log is registered upstream.", key,
+        )
 
     context.add_output_metadata(
         {
             "partition_key": MetadataValue.text(key),
             "source_item_count": MetadataValue.int(len(source_item_ids)),
             "row_count": MetadataValue.int(len(combined)),
+            "rows_naming_a_file": MetadataValue.int(count_rows_with_pdv(combined))
+            if len(combined) else MetadataValue.int(0),
             "valid_igsn_count": MetadataValue.int(valid_igsn_count),
             "igsn_issue_count": MetadataValue.int(len(igsn_issues)),
+            "shots_not_fired": MetadataValue.int(shots["not_fired"]),
+            "not_fired_by_reason": MetadataValue.text(
+                ", ".join(f"{k} ({v})" for k, v in shots["not_fired_by_reason"].items())
+                or "none"
+            ),
         }
     )
     return {
@@ -120,7 +147,7 @@ def pdv_log(
 
 @asset(
     group_name="helix_spreadsheet",
-    partitions_def=HELIX_EXPERIMENT_LOG_PARTITIONS,
+    partitions_def=HELIX_TRACE_PARTITIONS,
 )
 def pdv_data(
     context: AssetExecutionContext,
@@ -128,34 +155,27 @@ def pdv_data(
     pdv_log: dict,
     girder: GirderConnection,
 ) -> dict:
-    """Durable boundary: match PDV traces and write coordinate metadata.
+    """Durable boundary: pair this session's traces with their log rows and
+    write coordinate metadata to each trace.
 
-    Fetches the full ``pdv_trace`` inventory (indexed /aimdl/datafiles
-    query), matches each log row by PDV_FileName prefix, then writes
-    Station/Sample coordinates + coord_provenance to each matched Girder
-    item. With ``config.dry_run`` True (the default) the writes are
-    simulated, not performed. Returns one dict bundling everything the
-    attached checks need.
+    Fetches the PDV traces for this partition — not the whole collection —
+    and, for each, finds the single log row naming it. Matching is scoped to
+    the session, so a trace can only take coordinates from a row describing
+    its own sample. Traces that resolve to no row, to more than one, or to a
+    row declaring a different IGSN are reported and left untouched.
+
+    With ``config.dry_run`` True (the default) the writes are computed and
+    tallied but not performed.
     """
+    key = context.partition_key
     df = pdv_log["dataframe"]
     source_item_ids = pdv_log["source_item_ids"]
 
-    inventory = fetch_all_aimdl_datafiles(girder, PDV_TRACE_DATA_TYPE)
-    matches, pdv_issues = match_pdv_rows(df, inventory)
+    traces = fetch_partition_details(girder, HELIX_TRACE_DATA_TYPE, key)
 
-    # Rows whose candidate shot never fired have no trace to enrich, by design.
-    # Counted and reported, excluded from the match-rate denominator.
-    shots = classify_shots(df)
+    pairs, pair_issues = pair_traces_to_rows(traces, df)
 
-    try:
-        yaml_sha256 = compute_yaml_sha256(_COORD_YAML)
-    except FileNotFoundError:
-        context.log.error(
-            "Coordinate transforms YAML not found at %s; "
-            "coord_provenance.transform_yaml_sha256 will be null.",
-            _COORD_YAML,
-        )
-        yaml_sha256 = None
+    yaml_sha256 = compute_yaml_sha256(_COORD_YAML)
     transformer_version = get_transformer_version()
 
     try:
@@ -166,7 +186,7 @@ def pdv_data(
     write_summary = write_pdv_metadata(
         girder,
         df,
-        matches,
+        pairs,
         run_id=run_id,
         source_item_id=source_item_ids[0] if source_item_ids else None,
         yaml_sha256=yaml_sha256,
@@ -185,32 +205,39 @@ def pdv_data(
     if config.dry_run:
         context.log.info(
             "DRY RUN — would have written coordinate metadata to %d "
-            "matched pdv_trace item(s); no Girder writes performed.",
+            "paired pdv_trace item(s); no Girder writes performed.",
             write_summary["simulated_count"],
         )
 
     version_counter = write_summary["version_counter"]
-    rows_with_pdv = count_rows_with_pdv(df)
-    igsn_mismatch_count = sum(
-        1 for i in pdv_issues if i.get("type") == "igsn_mismatch"
+    by_type = {}
+    for i in pair_issues:
+        by_type[i["type"]] = by_type.get(i["type"], 0) + 1
+
+    context.log.info(
+        "pdv_data %s: %d trace(s), %d paired, %d unpaired (%s)",
+        key, len(traces), len(pairs), len(pair_issues),
+        ", ".join(f"{k}={v}" for k, v in sorted(by_type.items())) or "none",
     )
+
     context.add_output_metadata(
         {
             "dry_run": MetadataValue.bool(config.dry_run),
-            "inventory_count": MetadataValue.int(len(inventory)),
-            "matched_count": MetadataValue.int(len(matches)),
-            "rows_with_pdv": MetadataValue.int(rows_with_pdv),
-            "shots_fired": MetadataValue.int(shots["fired"]),
-            "shots_not_fired": MetadataValue.int(shots["not_fired"]),
-            "not_fired_by_reason": MetadataValue.text(
-                ", ".join(f"{k} ({v})" for k, v in shots["not_fired_by_reason"].items())
-                or "none"
+            "traces_in_partition": MetadataValue.int(len(traces)),
+            "paired_count": MetadataValue.int(len(pairs)),
+            "unpaired_count": MetadataValue.int(len(pair_issues)),
+            "unpaired_by_reason": MetadataValue.text(
+                ", ".join(f"{k}={v}" for k, v in sorted(by_type.items())) or "none"
             ),
-            "fired_but_unnamed": MetadataValue.int(shots["fired_but_unnamed"]),
+            "log_items": MetadataValue.int(len(source_item_ids)),
             "items_enriched": MetadataValue.int(write_summary["written_count"]),
             "items_simulated": MetadataValue.int(write_summary["simulated_count"]),
+            "no_station_coords": MetadataValue.int(write_summary["no_station_coords"]),
+            "paired_by_shot_identity": MetadataValue.int(
+                write_summary["paired_by_shot_identity"]
+            ),
             "write_errors_count": MetadataValue.int(len(write_summary["write_errors"])),
-            "igsn_mismatch_count": MetadataValue.int(igsn_mismatch_count),
+            "igsn_mismatch_count": MetadataValue.int(by_type.get("igsn_mismatch", 0)),
             "coordinate_transform_failures": MetadataValue.int(
                 write_summary["coord_failures"]
             ),
@@ -224,13 +251,13 @@ def pdv_data(
     )
     return {
         "dry_run": config.dry_run,
-        "inventory_count": len(inventory),
-        "matched_count": len(matches),
-        "rows_with_pdv": rows_with_pdv,
-        "shots": shots,
-        "pdv_issues": pdv_issues,
+        "traces_in_partition": len(traces),
+        "paired_count": len(pairs),
+        "pair_issues": pair_issues,
         "written_count": write_summary["written_count"],
         "simulated_count": write_summary["simulated_count"],
+        "no_station_coords": write_summary["no_station_coords"],
+        "paired_by_shot_identity": write_summary["paired_by_shot_identity"],
         "write_errors": write_summary["write_errors"],
         "coord_failures": write_summary["coord_failures"],
         "version_counter": version_counter,
@@ -241,7 +268,7 @@ def pdv_data(
 
 @asset(
     group_name="helix_spreadsheet",
-    partitions_def=HELIX_EXPERIMENT_LOG_PARTITIONS,
+    partitions_def=HELIX_TRACE_PARTITIONS,
 )
 def pdv_processing_manifest(
     context: AssetExecutionContext,
@@ -275,7 +302,10 @@ def pdv_processing_manifest(
         if manifest.get("write_failed"):
             write_failed = True
 
-    manifest_written = bool(source_item_ids) and not write_failed
+    # A partition whose log was never tagged upstream has nothing to write a
+    # manifest to. That is an upstream gap, not a write failure, so it does
+    # not fail the check — `has_log` carries the distinction.
+    manifest_written = not write_failed
 
     if config.dry_run:
         context.log.info(
@@ -289,19 +319,22 @@ def pdv_processing_manifest(
             "dry_run": MetadataValue.bool(config.dry_run),
             "status": MetadataValue.text(summary["status"]),
             "manifest_written": MetadataValue.bool(manifest_written),
+            "has_log": MetadataValue.bool(bool(source_item_ids)),
             "source_item_count": MetadataValue.int(len(source_item_ids)),
-            "rows_enriched": MetadataValue.int(summary["rows_enriched"]),
+            "traces_enriched": MetadataValue.int(summary["traces_enriched"]),
         }
     )
     return {
         "dry_run": config.dry_run,
         "status": summary["status"],
         "manifest_written": manifest_written,
+        "has_log": bool(source_item_ids),
         "issues_summary": summary["issues_summary"],
         "total_rows": summary["total_rows"],
         "rows_valid_igsn": summary["rows_valid_igsn"],
-        "rows_matched_pdv": summary["rows_matched_pdv"],
-        "rows_enriched": summary["rows_enriched"],
+        "traces_in_partition": summary["traces_in_partition"],
+        "traces_paired": summary["traces_paired"],
+        "traces_enriched": summary["traces_enriched"],
     }
 
 

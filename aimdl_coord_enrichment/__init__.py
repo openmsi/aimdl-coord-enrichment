@@ -15,7 +15,7 @@ from aimdl_coord_enrichment.checks import (
     igsn_validity_rate,
     manifest_written,
     pdv_match_rate,
-    zero_pdv_inventory,
+    zero_traces_in_partition,
 )
 from aimdl_coord_enrichment.coord_enrichment import (
     coord_enrichment_manifest,
@@ -43,7 +43,7 @@ from aimdl_coord_enrichment.schedules import (
     coord_enrichment_state_report_schedule,
 )
 from aimdl_coord_enrichment.sensors import (
-    helix_experiment_log_discovery_sensor,
+    helix_trace_discovery_sensor,
     maxima_run_discovery_sensor,
 )
 
@@ -120,7 +120,7 @@ defs = Definitions(
     asset_checks=[
         # helix_spreadsheet (retargeted to the 3-asset flow)
         igsn_validity_rate,
-        zero_pdv_inventory,
+        zero_traces_in_partition,
         pdv_match_rate,
         igsn_consistency,
         enrichment_success_rate,
@@ -149,7 +149,7 @@ defs = Definitions(
         coord_enrichment_helix_alpss_weekly_schedule,
     ],
     sensors=[
-        helix_experiment_log_discovery_sensor,
+        helix_trace_discovery_sensor,
         maxima_run_discovery_sensor,
     ],
     resources={

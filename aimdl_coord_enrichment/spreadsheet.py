@@ -2,7 +2,7 @@
 
 Context-free, unit-testable computation extracted from the former
 nine-asset spreadsheet DAG. Each function reuses an existing domain
-helper (``validate_igsn``, ``match_pdv_file``, ``transform_station_to_sample``,
+helper (``validate_igsn``, ``match_trace_to_row``, ``transform_station_to_sample``,
 ``build_coord_provenance``) rather than reimplementing it. No ``dagster``
 import lives here — the three partitioned assets in ``assets.py`` call
 these and own all durable external-state transitions.
@@ -10,6 +10,7 @@ these and own all durable external-state transitions.
 
 import json
 import math
+import re
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -18,7 +19,11 @@ from aimdl_coord_enrichment import __version__ as PIPELINE_VERSION
 from aimdl_coord_enrichment.constants import COLUMN_MAP
 from aimdl_coord_enrichment.coordinates import transform_station_to_sample
 from aimdl_coord_enrichment.girder_io import nan_to_none
-from aimdl_coord_enrichment.matching import match_pdv_file
+from aimdl_coord_enrichment.matching import (
+    PAIRING_SHOT_IDENTITY,
+    log_filename_stem,
+    match_trace_to_row,
+)
 from aimdl_coord_enrichment.provenance import build_coord_provenance
 from aimdl_coord_enrichment.validation import NpEncoder, validate_igsn
 
@@ -50,36 +55,86 @@ def validate_log_rows(df):
     return df, igsn_issues
 
 
-def match_pdv_rows(df, pdv_items):
-    """Match each row's PDV_FileName to the inventory and cross-check IGSNs.
+# A single-probe log names its trace in one `PDV_FileName` column. A multipoint
+# log has no such column: it carries one block per probe, `PDV_<n>_FileName`,
+# where <n> is the probe id (not the digitizer channel). Several probes can be
+# recorded onto the same channel file, so a row's probe columns collapse to
+# fewer distinct filenames than it has populated probes.
+#
+# Measured 2026-09-02 on LMI_20260818_JHAMAL00021-003.csv: 7 probe columns, 4
+# populated on every row, resolving to 2 distinct files (probe 10 -> C1,
+# probes 6/9/15 -> one shared C3).
+#
+# The flyer position is a property of the shot, i.e. of the row, so every file
+# a row names takes that row's coordinates.
+_PROBE_FILENAME_RE = re.compile(r"^PDV_\d+_FileName$")
 
-    Returns ``(matches, pdv_issues)`` where ``matches`` is
-    ``{row_idx: pdv_item}`` and ``pdv_issues`` carries not_found /
-    ambiguous / igsn_mismatch issues (each with its ``row`` index).
+
+def pdv_filename_columns(df):
+    """The log's PDV filename columns: the bare one, plus any per-probe ones."""
+    cols = [c for c in df.columns if c == "PDV_FileName"]
+    cols += sorted(c for c in df.columns if _PROBE_FILENAME_RE.match(c))
+    return cols
+
+
+def row_filename_stems(df):
+    """``{row_index: {stem, ...}}`` for every row that names at least one file.
+
+    Rows naming no file are omitted: a candidate shot the station declined to
+    fire produces no trace, so it can never be the counterpart of one. Probes
+    sharing a channel collapse into one stem, which is why the value is a set.
     """
-    matches = {}
-    pdv_issues = []
-
+    cols = pdv_filename_columns(df)
+    stems = {}
     for idx, row in df.iterrows():
-        pdv_filename = row.get("PDV_FileName")
-        pdv_item, issue = match_pdv_file(pdv_items, pdv_filename)
-        if pdv_item is not None:
-            matches[idx] = pdv_item
-            row_igsn = row.get("valid_igsn")
-            item_igsn = pdv_item.get("meta", {}).get("igsn")
-            if row_igsn and item_igsn and row_igsn != item_igsn:
-                pdv_issues.append({
-                    "pdv_filename": pdv_filename,
-                    "type": "igsn_mismatch",
-                    "row": idx,
-                    "spreadsheet_igsn": row_igsn,
-                    "item_igsn": item_igsn,
-                })
-        if issue is not None:
-            issue["row"] = idx
-            pdv_issues.append(issue)
+        found = {s for s in (log_filename_stem(row.get(c)) for c in cols) if s}
+        if found:
+            stems[idx] = found
+    return stems
 
-    return matches, pdv_issues
+
+def pair_traces_to_rows(traces, df):
+    """Pair each trace in a partition with its experiment-log row.
+
+    Returns ``(pairs, issues)`` where ``pairs`` is a list of
+    ``(trace_item, row_index, pairing)`` and ``issues`` carries one dict per
+    trace that could not be paired (``no_row_in_log`` / ``ambiguous_row``) or
+    that paired to a row declaring a different sample (``igsn_mismatch``).
+    ``pairing`` records whether the row named this exact file or a sibling
+    channel of the same shot — see ``matching.match_trace_to_row``.
+
+    The trace's own ``meta.igsn`` is authoritative. A partition's log may hold
+    rows belonging to another sample — logs from restarted runs are sometimes
+    written under the previous sample's identifier — so a row whose declared
+    IGSN disagrees with the trace is refused rather than applied.
+    """
+    stems = row_filename_stems(df)
+    pairs = []
+    issues = []
+
+    for trace in traces:
+        row_idx, pairing, issue = match_trace_to_row(trace["name"], stems)
+        if issue is not None:
+            issue["trace_id"] = trace["_id"]
+            issues.append(issue)
+            continue
+
+        trace_igsn = (trace.get("meta") or {}).get("igsn")
+        row_igsn = df.loc[row_idx].get("valid_igsn")
+        if trace_igsn and row_igsn and trace_igsn != row_igsn:
+            issues.append({
+                "trace_name": trace["name"],
+                "trace_id": trace["_id"],
+                "type": "igsn_mismatch",
+                "row": row_idx,
+                "trace_igsn": trace_igsn,
+                "row_igsn": row_igsn,
+            })
+            continue
+
+        pairs.append((trace, row_idx, pairing))
+
+    return pairs, issues
 
 
 # A HELIX experiment log records one row per *candidate* shot. Before firing,
@@ -199,7 +254,7 @@ def _parse_row_timestamp(raw):
 def write_pdv_metadata(
     girder,
     df,
-    matches,
+    pairs,
     *,
     run_id,
     source_item_id,
@@ -207,12 +262,12 @@ def write_pdv_metadata(
     transformer_version,
     dry_run=False,
 ):
-    """Write coordinate + provenance metadata to each matched PDV item.
+    """Write coordinate + provenance metadata to each paired PDV trace.
 
-    For each matched row: parse the shot timestamp, transform station to
-    sample coordinates (version selected by timestamp), build the
-    coord_provenance block, and write to the Girder item. Each row's
-    provenance is attributed to its originating source-log item via the
+    For each ``(trace_item, row_index, pairing)`` pair: parse the shot timestamp,
+    transform station to sample coordinates (version selected by timestamp),
+    build the coord_provenance block, and write to the trace item. Each
+    write is attributed to the originating source-log item via the
     ``_source_item_id`` column when present, else ``source_item_id``.
 
     When ``dry_run`` is True the coordinate metadata is fully computed but
@@ -220,7 +275,8 @@ def write_pdv_metadata(
     ``simulated_count`` instead of ``written_count``.
 
     Returns a summary dict with ``written_count``, ``simulated_count``,
-    ``write_errors``, ``coord_failures``, ``version_counter``,
+    ``write_errors``, ``coord_failures``, ``no_station_coords``,
+    ``paired_by_shot_identity``, ``version_counter``,
     ``naive_timestamps_count``.
     """
     naive_timestamps_count = 0
@@ -229,12 +285,25 @@ def write_pdv_metadata(
     simulated_count = 0
     write_errors = []
     coord_failures = 0
+    no_station_coords = 0
+    paired_by_shot_identity = 0
 
-    for row_idx, pdv_item in matches.items():
+    for pdv_item, row_idx, pairing in pairs:
         row = df.loc[row_idx]
 
         station_x = nan_to_none(row.get("Flyer_X_Position_Final_mm"))
         station_y = nan_to_none(row.get("Flyer_Y_Position_Final_mm"))
+
+        # The corrected flyer position is blank on some rows. Without it there
+        # is no coordinate to record, and writing Station/Sample = null would
+        # put meaningless metadata on the item and a provenance block claiming
+        # a transform that never ran. Skip and count instead.
+        if station_x is None or station_y is None:
+            no_station_coords += 1
+            continue
+
+        if pairing == PAIRING_SHOT_IDENTITY:
+            paired_by_shot_identity += 1
         shot_ts, was_naive, ts_origin = _parse_row_timestamp(row.get("Timestamp"))
         if was_naive:
             naive_timestamps_count += 1
@@ -271,6 +340,12 @@ def write_pdv_metadata(
                 "spreadsheet_item_id": row_source_item_id,
                 "spreadsheet_row_index": int(row_idx),
                 "spreadsheet_pdv_filename": row.get("PDV_FileName"),
+                # How this trace was tied to the row. "shot_identity" means the
+                # row named a sibling channel of the same shot, not this file —
+                # the flyer position is per-shot so the value is the same, but
+                # the marker makes those items queryable for re-verification
+                # once the log-writer records every probe.
+                "pairing": pairing,
             },
             dagster_run_id=run_id,
         )
@@ -302,6 +377,8 @@ def write_pdv_metadata(
         "simulated_count": simulated_count,
         "write_errors": write_errors,
         "coord_failures": coord_failures,
+        "no_station_coords": no_station_coords,
+        "paired_by_shot_identity": paired_by_shot_identity,
         "version_counter": version_counter,
         "naive_timestamps_count": naive_timestamps_count,
     }
@@ -310,16 +387,14 @@ def write_pdv_metadata(
 def summarize_pdv_processing(pdv_log, pdv_data):
     """Aggregate issues into a processing summary (status + issues_summary).
 
-    Replaces the old quality_report + processing_manifest aggregation,
-    minus ALPSS completeness (coverage now lives in the read-only
-    helix_pdv_coverage_observer).
+    Counts are trace-side: the denominator is the traces in the partition,
+    not the rows in the log.
     """
     df = pdv_log["dataframe"]
     igsn_issues = pdv_log["igsn_issues"]
-    pdv_issues = pdv_data["pdv_issues"]
+    pair_issues = pdv_data["pair_issues"]
     write_errors = pdv_data["write_errors"]
 
-    total_rows = len(df)
     valid_igsn_count = (
         int(df["valid_igsn"].notna().sum()) if "valid_igsn" in df.columns else 0
     )
@@ -327,11 +402,12 @@ def summarize_pdv_processing(pdv_log, pdv_data):
     issues_summary = {
         "igsn_invalid": sum(1 for i in igsn_issues if i.get("issue") == "invalid_format"),
         "igsn_missing": sum(1 for i in igsn_issues if i.get("issue") == "missing"),
-        "pdv_not_found": sum(1 for i in pdv_issues if i.get("type") == "not_found"),
-        "pdv_ambiguous": sum(1 for i in pdv_issues if i.get("type") == "ambiguous"),
-        "igsn_mismatch": sum(1 for i in pdv_issues if i.get("type") == "igsn_mismatch"),
+        "trace_no_row": sum(1 for i in pair_issues if i.get("type") == "no_row_in_log"),
+        "trace_ambiguous_row": sum(1 for i in pair_issues if i.get("type") == "ambiguous_row"),
+        "igsn_mismatch": sum(1 for i in pair_issues if i.get("type") == "igsn_mismatch"),
         "write_errors": len(write_errors),
         "coord_failures": pdv_data.get("coord_failures", 0),
+        "no_station_coords": pdv_data.get("no_station_coords", 0),
     }
 
     has_issues = any(v > 0 for v in issues_summary.values())
@@ -341,10 +417,11 @@ def summarize_pdv_processing(pdv_log, pdv_data):
         "status": status,
         "has_issues": has_issues,
         "issues_summary": issues_summary,
-        "total_rows": total_rows,
+        "total_rows": len(df),
         "rows_valid_igsn": valid_igsn_count,
-        "rows_matched_pdv": pdv_data["matched_count"],
-        "rows_enriched": pdv_data["written_count"],
+        "traces_in_partition": pdv_data["traces_in_partition"],
+        "traces_paired": pdv_data["paired_count"],
+        "traces_enriched": pdv_data["written_count"],
     }
 
 
@@ -364,8 +441,9 @@ def write_processing_manifest(girder, item_id, summary, *, run_id, dry_run=False
         "pipeline_version": PIPELINE_VERSION,
         "total_rows": summary["total_rows"],
         "rows_valid_igsn": summary["rows_valid_igsn"],
-        "rows_matched_pdv": summary["rows_matched_pdv"],
-        "rows_enriched": summary["rows_enriched"],
+        "traces_in_partition": summary["traces_in_partition"],
+        "traces_paired": summary["traces_paired"],
+        "traces_enriched": summary["traces_enriched"],
         "status": summary["status"],
         "issues_summary": summary["issues_summary"],
     }

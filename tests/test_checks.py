@@ -13,18 +13,18 @@ from aimdl_coord_enrichment.checks import (
     eval_igsn_validity,
     eval_manifest_written,
     eval_pdv_match_rate,
-    eval_zero_inventory,
+    eval_zero_traces,
 )
 
 
-def test_zero_inventory_fails_on_empty():
-    result = eval_zero_inventory({"inventory_count": 0})
+def test_zero_traces_fails_on_empty_partition():
+    result = eval_zero_traces({"traces_in_partition": 0})
     assert not result.passed
     assert result.severity.value == "ERROR"
 
 
-def test_zero_inventory_passes_with_items():
-    result = eval_zero_inventory({"inventory_count": 5})
+def test_zero_traces_passes_with_traces():
+    result = eval_zero_traces({"traces_in_partition": 5})
     assert result.passed
 
 
@@ -45,13 +45,28 @@ def test_igsn_validity_rate_empty_passes():
 
 
 def test_pdv_match_rate_passes():
-    result = eval_pdv_match_rate({"rows_with_pdv": 2, "matched_count": 2})
+    result = eval_pdv_match_rate(
+        {"traces_in_partition": 2, "paired_count": 2, "log_items": 1}
+    )
     assert result.passed  # 2/2 = 100%
 
 
 def test_pdv_match_rate_warns():
-    result = eval_pdv_match_rate({"rows_with_pdv": 4, "matched_count": 1})
+    result = eval_pdv_match_rate(
+        {"traces_in_partition": 4, "paired_count": 1, "log_items": 1}
+    )
     assert not result.passed  # 1/4 = 25%
+
+
+def test_pdv_match_rate_passes_when_no_log_is_tagged():
+    """A partition whose log is not tagged upstream has no rows to pair
+    against. Nothing this pipeline can do and nothing to act on, so it passes;
+    log_items records the condition without turning the run red."""
+    result = eval_pdv_match_rate(
+        {"traces_in_partition": 12, "paired_count": 0, "log_items": 0}
+    )
+    assert result.passed
+    assert result.metadata["log_items"].value == 0
 
 
 def test_igsn_consistency_passes():
@@ -67,14 +82,14 @@ def test_igsn_consistency_errors_on_mismatch():
 
 def test_enrichment_success_rate_passes():
     result = eval_enrichment_success_rate(
-        {"items_enriched": 9, "items_simulated": 0, "matched_count": 10}
+        {"items_enriched": 9, "items_simulated": 0, "paired_count": 10}
     )
     assert result.passed  # 9/10 = 90%
 
 
 def test_enrichment_success_rate_warns():
     result = eval_enrichment_success_rate(
-        {"items_enriched": 5, "items_simulated": 0, "matched_count": 10,
+        {"items_enriched": 5, "items_simulated": 0, "paired_count": 10,
          "write_errors_count": 5}
     )
     assert not result.passed  # 5/10 = 50%
@@ -83,7 +98,7 @@ def test_enrichment_success_rate_warns():
 def test_enrichment_success_rate_counts_dry_run_simulated():
     """A dry run (enriched=0, simulated=matched) reads as a representative pass."""
     result = eval_enrichment_success_rate(
-        {"items_enriched": 0, "items_simulated": 10, "matched_count": 10}
+        {"items_enriched": 0, "items_simulated": 10, "paired_count": 10}
     )
     assert result.passed  # (0+10)/10 = 100%
 

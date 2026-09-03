@@ -49,15 +49,20 @@ def _raw_log_csv():
 
 
 def _mock_girder(log_items, pdv_items):
-    """MagicMock girder dispatching .get on path + .downloadFile + .addMetadataToItem."""
+    """MagicMock girder dispatching .get on path + .downloadFile + .addMetadataToItem.
+
+    Both assets now read aimdl/partition/details, so the mock routes on
+    dataType: pdv_experiment_log for pdv_log, pdv_trace for pdv_data.
+    """
     client = MagicMock()
     csv_bytes = _raw_log_csv()
 
     def fake_get(path, parameters=None):
         if path == "aimdl/partition/details":
+            dt = (parameters or {}).get("dataType")
+            if dt == "pdv_trace":
+                return pdv_items
             return log_items
-        if path == "aimdl/datafiles":
-            return pdv_items
         if path.startswith("item/") and path.endswith("/files"):
             item_id = path.split("/")[1]
             return [{"_id": f"file-{item_id}"}]
@@ -148,11 +153,10 @@ def test_pdv_data_matches_and_writes():
     ctx = build_asset_context(partition_key=PARTITION_KEY)
     result = pdv_data_fn(context=ctx, config=LIVE, pdv_log=pdv_log, girder=girder)
 
-    assert result["inventory_count"] == 1
-    assert result["matched_count"] == 1
-    assert result["rows_with_pdv"] == 1
+    assert result["traces_in_partition"] == 1
+    assert result["paired_count"] == 1
     assert result["written_count"] == 1
-    assert result["pdv_issues"] == []
+    assert result["pair_issues"] == []
     assert result["version_counter"]
     girder.addMetadataToItem.assert_called_once()
     item_id_arg, payload = girder.addMetadataToItem.call_args[0]
@@ -171,9 +175,10 @@ def test_pdv_processing_manifest_writes_status():
         "partition_key": PARTITION_KEY,
     }
     pdv_data = {
-        "pdv_issues": [],
+        "pair_issues": [],
         "write_errors": [],
-        "matched_count": 1,
+        "traces_in_partition": 1,
+        "paired_count": 1,
         "written_count": 1,
         "coord_failures": 0,
     }
@@ -202,9 +207,10 @@ def test_pdv_processing_manifest_flags_write_failure():
         "partition_key": PARTITION_KEY,
     }
     pdv_data = {
-        "pdv_issues": [],
+        "pair_issues": [],
         "write_errors": [],
-        "matched_count": 1,
+        "traces_in_partition": 1,
+        "paired_count": 1,
         "written_count": 1,
         "coord_failures": 0,
     }
@@ -308,7 +314,7 @@ def test_pdv_data_dry_run_skips_writes():
 
     girder.addMetadataToItem.assert_not_called()
     assert result["dry_run"] is True
-    assert result["matched_count"] == 1
+    assert result["paired_count"] == 1
     assert result["written_count"] == 0
     assert result["simulated_count"] == 1
     # Transform still computed even though nothing was written.
@@ -326,9 +332,10 @@ def test_pdv_processing_manifest_dry_run_skips_write():
         "partition_key": PARTITION_KEY,
     }
     pdv_data = {
-        "pdv_issues": [],
+        "pair_issues": [],
         "write_errors": [],
-        "matched_count": 1,
+        "traces_in_partition": 1,
+        "paired_count": 1,
         "written_count": 0,
         "simulated_count": 1,
         "coord_failures": 0,

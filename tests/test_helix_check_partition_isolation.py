@@ -34,7 +34,7 @@ from aimdl_coord_enrichment.checks import (
     igsn_validity_rate,
     manifest_written,
     pdv_match_rate,
-    zero_pdv_inventory,
+    zero_traces_in_partition,
 )
 from aimdl_coord_enrichment.coordinates import _COORD_TRANSFORMER
 
@@ -77,19 +77,23 @@ def test_partition_job_succeeds_with_unmaterialized_sibling_partition():
 
     with DagsterInstance.ephemeral() as instance:
         instance.add_dynamic_partitions(
-            "helix_experiment_log", [MATERIALIZED_KEY, SIBLING_KEY]
+            "helix_pdv_trace", [MATERIALIZED_KEY, SIBLING_KEY]
         )
         girder = MagicMock()
 
+        # One patch, routed by data type: pdv_log reads the experiment log(s)
+        # for the key, pdv_data reads that key's traces.
+        def _details(g, data_type, key):
+            if data_type == "pdv_trace":
+                return _pdv_inventory()
+            return [{"_id": "log1", "name": "log.csv"}]
+
         with patch(
             "aimdl_coord_enrichment.assets.fetch_partition_details",
-            side_effect=lambda g, dt, key: [{"_id": "log1", "name": "log.csv"}],
+            side_effect=_details,
         ), patch(
             "aimdl_coord_enrichment.assets.download_and_read",
             side_effect=lambda g, item_id, name: _log_df(),
-        ), patch(
-            "aimdl_coord_enrichment.assets.fetch_all_aimdl_datafiles",
-            side_effect=lambda g, dt: _pdv_inventory(),
         ):
             result = materialize(
                 [
@@ -97,7 +101,7 @@ def test_partition_job_succeeds_with_unmaterialized_sibling_partition():
                     pdv_data,
                     pdv_processing_manifest,
                     igsn_validity_rate,
-                    zero_pdv_inventory,
+                    zero_traces_in_partition,
                     pdv_match_rate,
                     igsn_consistency,
                     enrichment_success_rate,
@@ -125,7 +129,7 @@ def test_partition_job_succeeds_with_unmaterialized_sibling_partition():
     }
     assert check_evals == {
         "igsn_validity_rate": True,
-        "zero_pdv_inventory": True,
+        "zero_traces_in_partition": True,
         "pdv_match_rate": True,
         "igsn_consistency": True,
         "enrichment_success_rate": True,

@@ -1,5 +1,5 @@
-"""Tests for helix_experiment_log_discovery_sensor — partition add
-requests and partitioned RunRequest construction with content-hash run keys."""
+"""Tests for helix_trace_discovery_sensor — partition add requests and
+partitioned RunRequest construction with content-hash run keys."""
 
 from unittest.mock import MagicMock
 
@@ -9,17 +9,17 @@ from dagster import (
     build_sensor_context,
 )
 
-from aimdl_coord_enrichment.sensors import helix_experiment_log_discovery_sensor
+from aimdl_coord_enrichment.sensors import helix_trace_discovery_sensor
 
 
 def _mock_girder_with(index: dict[str, str]) -> MagicMock:
     """MagicMock client whose .get('aimdl/partition', parameters=...) returns
-    the experiment-log index, simulating fetch_partition_index's HTTP shape."""
+    the pdv_trace index, simulating fetch_partition_index's HTTP shape."""
     client = MagicMock()
 
     def fake_get(path, parameters=None):
         if path == "aimdl/partition":
-            assert parameters["dataType"] == "pdv_experiment_log"
+            assert parameters["dataType"] == "pdv_trace"
             return index
         raise AssertionError(f"unexpected client call: {path} {parameters}")
 
@@ -32,7 +32,7 @@ def _run_sensor(girder):
         instance=DagsterInstance.ephemeral(),
         resources={"girder": girder},
     )
-    return helix_experiment_log_discovery_sensor(ctx)
+    return helix_trace_discovery_sensor(ctx)
 
 
 def test_sensor_empty_index_emits_no_requests():
@@ -59,7 +59,7 @@ def test_sensor_run_key_embeds_content_hash():
     index = {"K1//T1": "hashA"}
     result = _run_sensor(_mock_girder_with(index))
     rr = result.run_requests[0]
-    assert rr.run_key == "helix-pdv-log|K1//T1|hash=hashA"
+    assert rr.run_key == "helix-pdv-trace|K1//T1|hash=hashA"
     assert rr.partition_key == "K1//T1"
-    assert rr.tags["data_type"] == "pdv_experiment_log"
+    assert rr.tags["data_type"] == "pdv_trace"
     assert rr.tags["content_hash"] == "hashA"

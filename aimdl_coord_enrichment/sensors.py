@@ -10,8 +10,8 @@ from aimdl_coord_enrichment.assets import process_helix_assets_job
 from aimdl_coord_enrichment.coord_enrichment.inventory import MAXIMA_RUN_PARTITIONS
 from aimdl_coord_enrichment.girder_io import fetch_partition_index
 from aimdl_coord_enrichment.partitions import (
-    HELIX_EXPERIMENT_LOG_DATA_TYPE,
-    HELIX_EXPERIMENT_LOG_PARTITIONS,
+    HELIX_TRACE_DATA_TYPE,
+    HELIX_TRACE_PARTITIONS,
 )
 from aimdl_coord_enrichment.resources import GirderConnection
 
@@ -104,35 +104,37 @@ def maxima_run_discovery_sensor(
     minimum_interval_seconds=3600,
     default_status=DefaultSensorStatus.STOPPED,
 )
-def helix_experiment_log_discovery_sensor(
+def helix_trace_discovery_sensor(
     context: SensorEvaluationContext,
     girder: GirderConnection,
 ) -> SensorResult:
-    """Discover AIMD-L partitions for HELIX experiment logs.
+    """Discover AIMD-L shot sessions that have PDV traces.
 
-    Per tick, fetches the partition index for ``pdv_experiment_log``
-    (keyed ``"<igsn>//<experiment_date>"`` with content-hash values),
-    registers every key on the ``helix_experiment_log`` dynamic
-    dimension, and emits one partitioned RunRequest per key. The run_key
-    embeds the content hash, so unchanged partitions are suppressed and a
-    changed log re-triggers.
+    Per tick, fetches the partition index for ``pdv_trace`` (keyed
+    ``"<igsn>//<experiment_date>"`` with content-hash values), registers every
+    key on the ``helix_pdv_trace`` dynamic dimension, and emits one
+    partitioned RunRequest per key. The run_key embeds the content hash, so
+    unchanged partitions are suppressed and newly ingested traces re-trigger.
+
+    Traces without ``meta.igsn`` never appear in the index, so unannotated
+    files are out of scope by construction.
     """
-    index = fetch_partition_index(girder, HELIX_EXPERIMENT_LOG_DATA_TYPE)
+    index = fetch_partition_index(girder, HELIX_TRACE_DATA_TYPE)
 
     context.log.info(
-        "helix_experiment_log_discovery_sensor: %d partitions", len(index)
+        "helix_trace_discovery_sensor: %d partitions", len(index)
     )
 
     return SensorResult(
         dynamic_partitions_requests=[
-            HELIX_EXPERIMENT_LOG_PARTITIONS.build_add_request(sorted(index))
+            HELIX_TRACE_PARTITIONS.build_add_request(sorted(index))
         ],
         run_requests=[
             RunRequest(
-                run_key=f"helix-pdv-log|{key}|hash={content_hash}",
+                run_key=f"helix-pdv-trace|{key}|hash={content_hash}",
                 partition_key=key,
                 tags={
-                    "data_type": HELIX_EXPERIMENT_LOG_DATA_TYPE,
+                    "data_type": HELIX_TRACE_DATA_TYPE,
                     "content_hash": content_hash,
                 },
             )
