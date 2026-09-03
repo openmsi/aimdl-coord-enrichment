@@ -204,6 +204,32 @@ the top of the config editor.
 
 The same backfill is also reachable from the job's **Partitions** tab.
 
+### Alternative: the scripted pass
+
+If the backfill dialog does not offer a run-config editor, or you would rather
+have a deterministic loop with a written report, use the runner. It executes
+one partition at a time against the **real** Dagster instance, so every run is
+recorded and visible in the UI exactly as a launchpad run would be.
+
+```bash
+set -a; . ./.env; set +a
+export DAGSTER_HOME="$PWD/.dagster_home"
+
+# rehearse (no writes) — omit --live
+.venv/bin/python operations/run_live_pass.py --all
+
+# a single month, live
+.venv/bin/python operations/run_live_pass.py --month 2026-08 --live
+
+# everything, live
+.venv/bin/python operations/run_live_pass.py --all --live
+```
+
+Writes happen only with `--live`; without it every op runs `dry_run=True`.
+Each invocation writes `operations/log/live_pass_<timestamp>.json` with
+per-partition counts and any failures. Partitions already enriched are simply
+rewritten with fresh provenance, so re-running is safe.
+
 ### Do it in batches, not all 290 at once
 
 For a first live write, prefer batches over one 290-partition backfill:
