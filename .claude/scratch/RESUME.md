@@ -2,9 +2,9 @@
 
 ## In one line
 
-**The first live sweep is done.** 57,787 items in production Girder now carry
-coordinates — 5,867 `pdv_trace` and 51,920 ALPSS derived files — with zero write
-errors. Suite 371 passed / 1 skipped.
+**All three flows have been run live.** 156,117 items in production Girder now
+carry coordinates — 5,867 `pdv_trace`, 51,920 HELIX ALPSS, 98,330 MAXIMA — with
+zero write errors. Suite 371 passed / 1 skipped.
 
 ## 1. How the HELIX flow works
 
@@ -53,6 +53,7 @@ stamping a null coordinate.
 | `pdv_alpss_output` | 46,151 of 59,943 |
 | `pdv_alpss_result` | 5,769 of 7,493 |
 | `pdv_alpss_results` | 0 (partition is empty) |
+| MAXIMA (all data types) | 98,330 of 99,791, across 1,677 run partitions |
 
 Zero write errors. Traces: 5,036 paired by filename, 831 by shot identity;
 `HELIX/v1` 965 / `HELIX/v2` 4,902. ALPSS inherits the parent's recorded version
@@ -64,6 +65,9 @@ Not enriched, all upstream data gaps, all resolved by a re-run once fixed:
 - **786 August traces** whose log row has no corrected flyer position
 - **57 traces** refused as `ambiguous_row` (contradictory logs)
 - **15,516 ALPSS items** excluded `parent_not_enriched` — children of the above
+- **1,461 MAXIMA items** in 62 runs with no usable `instructions.txt`
+  (`no_instructions` 1,265, `malformed_instructions` 196) — a property of the
+  run as produced, not a failure
 
 ## 3. Scope — what is deliberately not counted
 
@@ -86,17 +90,14 @@ must read every `PDV_<n>_FileName` and dedupe by filename.
 
 ## 4. Next steps
 
-1. **MAXIMA has never been run.** 0 `maxima_run` partitions are registered and
-   it has never been dry-run at corpus scale. This is the largest untouched
-   piece of work.
-2. **Close the residual 311** — 254 traces that find no row in a tagged log,
+1. **Close the residual 311** — 254 traces that find no row in a tagged log,
    57 refused as `ambiguous_row` (contradictory logs; see
    `docs/upstream_issues/helix-03-duplicate-overlapping-experiment-logs.md`).
    This is the remaining gap between 92.2% and complete.
-   Register partitions by test-evaluating `maxima_run_discovery_sensor`,
-   leaving it **STOPPED** — a running sensor submits up to 1,664 RunRequests.
-3. **Draft the upstream issue** for the `PDV_FileName` log-tagging gate.
-4. **Re-run HELIX + ALPSS** once the upstream gaps close. Both are idempotent.
+2. **Draft the upstream issue** for the `PDV_FileName` log-tagging gate.
+3. **Re-run any flow** once the upstream gaps close. All are idempotent.
+4. **Timing, measured 2026-09-03:** HELIX traces ~15 min; ALPSS ~45 min;
+   MAXIMA ~105 min for 1,677 partitions. Writes cost roughly 3x a dry run.
 
 ## 5. Running it
 
@@ -111,6 +112,7 @@ set -a; . ./.env; set +a
 .venv/bin/python operations/run_live_pass.py --month 2026-08 --live
 .venv/bin/python operations/run_live_pass.py --all --live
 .venv/bin/python operations/run_live_pass.py --flow alpss --all --live  # after traces
+.venv/bin/python operations/run_live_pass.py --flow maxima --all --live # independent
 ```
 Runs are recorded in the real Dagster instance and visible in the UI. See
 `docs/runbooks/live_enrichment_pass.md`.

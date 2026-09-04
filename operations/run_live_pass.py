@@ -39,6 +39,11 @@ FLOWS = {
         "ops": ["helix_alpss_provenance_tagged", "enriched_helix_alpss"],
         "leaf": "enriched_helix_alpss",
     },
+    "maxima": {
+        "job": "coord_enrichment_maxima_partition_job",
+        "ops": ["enriched_maxima_run"],
+        "leaf": "enriched_maxima_run",
+    },
 }
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -67,8 +72,10 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--flow", choices=sorted(FLOWS), default="traces",
                     help="traces: enrich pdv_trace from the experiment logs. "
-                         "alpss: inherit those coordinates to the ALPSS "
-                         "derived files. Run alpss only after traces.")
+                         "alpss: inherit those coordinates to the ALPSS derived "
+                         "files; run only after traces. maxima: enrich each "
+                         "AIMD-L run from its instructions.txt, independent of "
+                         "HELIX.")
     sel = ap.add_mutually_exclusive_group(required=True)
     sel.add_argument("--partitions", nargs="+", help="explicit partition keys")
     sel.add_argument("--all", action="store_true", help="every registered partition")
@@ -102,12 +109,22 @@ def main():
         apiUrl=os.environ["GIRDER_API_URL"], apiKey=os.environ["GIRDER_API_KEY"],
         session=requests.Session(),
     )
-    from aimdl_coord_enrichment.coord_enrichment import HELIX_ALPSS_PARTITIONS
+    from aimdl_coord_enrichment.coord_enrichment import (
+        HELIX_ALPSS_PARTITIONS,
+        MAXIMA_RUN_PARTITIONS,
+    )
+    from aimdl_coord_enrichment.sensors import _MAXIMA_DISCOVERY_DATA_TYPES
 
     if args.flow == "alpss":
         index = {k: "" for k in HELIX_ALPSS_PARTITIONS.get_partition_keys()}
         if args.month:
             sys.exit("--month applies to the traces flow; ALPSS partitions are static.")
+    elif args.flow == "maxima":
+        # One partition per AIMD-L run. A run can produce several data types,
+        # so the key set is their union.
+        index = {}
+        for dt in _MAXIMA_DISCOVERY_DATA_TYPES:
+            index.update(fetch_partition_index(client, dt))
     else:
         index = fetch_partition_index(client, HELIX_TRACE_DATA_TYPE)
 
@@ -128,6 +145,8 @@ def main():
     instance = DagsterInstance.get()
     if args.flow == "traces":
         instance.add_dynamic_partitions(HELIX_TRACE_PARTITIONS.name, sorted(index))
+    elif args.flow == "maxima":
+        instance.add_dynamic_partitions(MAXIMA_RUN_PARTITIONS.name, sorted(index))
 
     flow = FLOWS[args.flow]
     mode = "LIVE — writing to Girder" if args.live else "dry run — no writes"
@@ -163,7 +182,7 @@ def main():
                 "shot_identity": out["paired_by_shot_identity"],
                 "write_errors": len(out["write_errors"]),
             }
-        else:
+        else:  # alpss and maxima share the counts/excluded shape
             counts = out["counts"]
             excluded = out.get("excluded", {}) or {}
             row = {
